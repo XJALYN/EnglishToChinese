@@ -2,6 +2,7 @@ PyQt6>=6.6
 PyQt6-WebEngine>=6.6
 faster-whisper>=1.0
 yt-dlp>=2024.1
+curl_cffi>=0.10
 python-mpv>=1.0
 sounddevice>=0.4
 numpy>=1.24

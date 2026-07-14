@@ -56,7 +56,7 @@ cd electron && npm install && npm run electron
 ## 功能
 
 ### 同声传译
-- B 站链接 → yt-dlp 直链 → mpv 播放（原声静音）
+- Bilibili / YouTube 等链接 → yt-dlp 直链 → mpv 播放（原声静音）
 - faster-whisper 本地 ASR → 百炼翻译 → CosyVoice TTS
 - 实时字幕叠加
 

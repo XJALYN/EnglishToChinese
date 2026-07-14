@@ -1,4 +1,4 @@
-"""AI 总结 + 思维导图面板."""
+"""AI 总结 + 思维导图面板 — Corporate Clean."""
 
 from __future__ import annotations
 
@@ -42,6 +42,7 @@ class _AiSignals(QObject):
 class AiPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("aiPanel")
         self._page_url = ""
         self._summary_text = ""
         self._mindmap_text = ""
@@ -55,39 +56,54 @@ class AiPanel(QWidget):
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(14, 12, 14, 10)
+        root.setSpacing(8)
+
+        heading = QLabel("学习辅助")
+        heading.setObjectName("panelHeading")
+        root.addWidget(heading)
 
         self._tabs = QTabWidget()
 
         # --- 总结 Tab ---
         summary_tab = QWidget()
         s_layout = QVBoxLayout(summary_tab)
+        s_layout.setContentsMargins(8, 10, 8, 8)
+        s_layout.setSpacing(8)
         s_bar = QHBoxLayout()
-        self._summary_btn = QPushButton("✨ AI 一键总结")
+        s_bar.setSpacing(8)
+        self._summary_btn = QPushButton("生成总结")
+        self._summary_btn.setObjectName("primaryBtn")
         self._summary_btn.clicked.connect(self._run_summary)
         s_bar.addWidget(self._summary_btn)
-        self._export_summary_btn = QPushButton("导出总结")
+        self._export_summary_btn = QPushButton("导出")
         self._export_summary_btn.clicked.connect(self._export_summary)
         s_bar.addWidget(self._export_summary_btn)
         s_bar.addStretch()
         s_layout.addLayout(s_bar)
         self._summary_view = QTextEdit()
         self._summary_view.setReadOnly(True)
-        self._summary_view.setPlaceholderText("点击「AI 一键总结」生成视频内容摘要…")
+        self._summary_view.setPlaceholderText(
+            "同传结束后，点击「生成总结」整理视频要点…"
+        )
         s_layout.addWidget(self._summary_view)
-        self._tabs.addTab(summary_tab, "AI 总结")
+        self._tabs.addTab(summary_tab, "总结")
 
         # --- 思维导图 Tab ---
         mindmap_tab = QWidget()
         m_layout = QVBoxLayout(mindmap_tab)
+        m_layout.setContentsMargins(8, 10, 8, 8)
+        m_layout.setSpacing(8)
         m_bar = QHBoxLayout()
-        self._mindmap_btn = QPushButton("🧠 生成思维导图")
+        m_bar.setSpacing(8)
+        self._mindmap_btn = QPushButton("生成导图")
+        self._mindmap_btn.setObjectName("primaryBtn")
         self._mindmap_btn.clicked.connect(self._run_mindmap)
         m_bar.addWidget(self._mindmap_btn)
-        self._export_mindmap_btn = QPushButton("导出导图")
+        self._export_mindmap_btn = QPushButton("导出")
         self._export_mindmap_btn.clicked.connect(self._export_mindmap)
         m_bar.addWidget(self._export_mindmap_btn)
-        self._export_all_btn = QPushButton("一键导出全部")
+        self._export_all_btn = QPushButton("全部导出")
         self._export_all_btn.clicked.connect(self._export_all)
         m_bar.addWidget(self._export_all_btn)
         m_bar.addStretch()
@@ -100,14 +116,16 @@ class AiPanel(QWidget):
             self._mindmap_view = QTextEdit()
             self._mindmap_view.setReadOnly(True)
             self._mindmap_view.setPlaceholderText(
-                "安装 PyQt6-WebEngine 可预览可视化思维导图\npip install PyQt6-WebEngine"
+                "安装 PyQt6-WebEngine 可预览可视化思维导图\n"
+                "pip install PyQt6-WebEngine"
             )
         m_layout.addWidget(self._mindmap_view)
         self._tabs.addTab(mindmap_tab, "思维导图")
 
-        root.addWidget(self._tabs)
+        root.addWidget(self._tabs, stretch=1)
+
         self._status = QLabel("")
-        self._status.setStyleSheet("color: #888; font-size: 12px; padding: 4px;")
+        self._status.setObjectName("panelStatus")
         root.addWidget(self._status)
 
     def set_page_url(self, url: str) -> None:
@@ -122,7 +140,7 @@ class AiPanel(QWidget):
         self._summary_btn.setEnabled(False)
         self._summary_view.clear()
         self._summary_text = ""
-        self._signals.status.emit("正在生成 AI 总结…")
+        self._signals.status.emit("正在生成总结…")
         threading.Thread(target=self._summary_worker, daemon=True).start()
 
     def _summary_worker(self) -> None:
@@ -157,7 +175,7 @@ class AiPanel(QWidget):
         self._summary_text = text
         self._summary_view.setPlainText(text)
         self._summary_btn.setEnabled(True)
-        self._signals.status.emit("AI 总结完成")
+        self._signals.status.emit("总结完成")
         self._tabs.setCurrentIndex(0)
 
     def _on_mindmap_done(self, mermaid: str) -> None:
@@ -183,7 +201,7 @@ class AiPanel(QWidget):
 
     def _export_summary(self) -> None:
         if not self._summary_text:
-            QMessageBox.information(self, "提示", "请先生成 AI 总结")
+            QMessageBox.information(self, "提示", "请先生成总结")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "导出总结", "summary.md", "Markdown (*.md);;HTML (*.html);;JSON (*.json)"
@@ -209,7 +227,7 @@ class AiPanel(QWidget):
 
     def _export_all(self) -> None:
         if not self._summary_text or not self._mindmap_text:
-            QMessageBox.information(self, "提示", "请先生成 AI 总结和思维导图")
+            QMessageBox.information(self, "提示", "请先生成总结和思维导图")
             return
         folder = QFileDialog.getExistingDirectory(self, "选择导出目录")
         if not folder:

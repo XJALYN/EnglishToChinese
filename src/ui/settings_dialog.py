@@ -1,4 +1,4 @@
-"""可视化大模型配置对话框."""
+"""可视化大模型配置对话框 — Corporate Clean."""
 
 from __future__ import annotations
 
@@ -24,28 +24,37 @@ class SettingsDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("大模型配置")
-        self.setMinimumWidth(480)
+        self.setWindowTitle("设置")
+        self.setMinimumWidth(520)
         self._build()
         self._load()
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
+
+        title = QLabel("大模型与 ASR")
+        title.setObjectName("panelHeading")
+        layout.addWidget(title)
+
         form = QFormLayout()
+        form.setSpacing(12)
+        form.setHorizontalSpacing(16)
 
         self._api_key = QLineEdit()
         self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._api_key.setPlaceholderText("sk-...")
-        form.addRow("百炼 API Key", self._api_key)
+        self._api_key.setPlaceholderText("sk-…")
 
         show_btn = QPushButton("显示")
-        show_btn.setFixedWidth(48)
+        show_btn.setFixedWidth(56)
         show_btn.setCheckable(True)
         show_btn.toggled.connect(self._toggle_key_visibility)
         key_row = QHBoxLayout()
+        key_row.setSpacing(8)
         key_row.addWidget(self._api_key)
         key_row.addWidget(show_btn)
-        form.addRow("", key_row)
+        form.addRow("百炼 API Key", key_row)
 
         self._translate_model = QComboBox()
         self._translate_model.addItems(QWEN_MODELS)
@@ -53,7 +62,7 @@ class SettingsDialog(QDialog):
 
         self._summary_model = QComboBox()
         self._summary_model.addItems(QWEN_MODELS)
-        form.addRow("AI 总结模型", self._summary_model)
+        form.addRow("总结模型", self._summary_model)
 
         self._mindmap_model = QComboBox()
         self._mindmap_model.addItems(QWEN_MODELS)
@@ -75,14 +84,18 @@ class SettingsDialog(QDialog):
 
         hint = QLabel(
             "配置保存至 config.json 并同步 .env。\n"
-            "也可使用 Electron 前端（npm run electron）连接同一套 Python 后端。"
+            "也可使用 Electron 前端连接同一套 Python 后端。"
         )
-        hint.setStyleSheet("color: #888; font-size: 12px;")
+        hint.setObjectName("settingsHint")
+        hint.setWordWrap(True)
         layout.addWidget(hint)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setObjectName("primaryBtn")
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("保存")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -91,6 +104,9 @@ class SettingsDialog(QDialog):
         self._api_key.setEchoMode(
             QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
         )
+        sender = self.sender()
+        if isinstance(sender, QPushButton):
+            sender.setText("隐藏" if visible else "显示")
 
     def _load(self) -> None:
         cfg = settings_manager.data

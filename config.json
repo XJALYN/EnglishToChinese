@@ -1,0 +1,9 @@
+{
+  "dashscope_api_key": "sk-7bb755e87cd6478aac1570e735ec1daf",
+  "translate_model": "qwen-plus",
+  "summary_model": "qwen-plus",
+  "mindmap_model": "qwen-plus",
+  "whisper_model": "base",
+  "tts_voice": "longtian_v3",
+  "hf_endpoint": "https://hf-mirror.com"
+}

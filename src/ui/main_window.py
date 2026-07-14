@@ -1,4 +1,4 @@
-"""主窗口: B站播放 + 同声传译 + AI 总结/思维导图."""
+"""主窗口: 视频播放 + 同声传译 + AI 总结/思维导图 — Corporate Clean 布局."""
 
 from __future__ import annotations
 
@@ -7,12 +7,15 @@ from datetime import datetime
 
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QStatusBar,
     QTextEdit,
@@ -22,7 +25,7 @@ from PyQt6.QtWidgets import (
 
 from src.config import settings_manager
 from src.pipeline.pipeline_manager import InterpretationPipeline
-from src.player.bilibili import resolve_bilibili_url
+from src.player.bilibili import resolve_video_url
 from src.player.mpv_player import MpvPlayer
 from src.store.transcript_store import transcript_store
 from src.ui.ai_panel import AiPanel
@@ -43,13 +46,14 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("本地同声传译播放器")
-        self.resize(1400, 820)
+        self.resize(1440, 880)
 
         self._pipeline: InterpretationPipeline | None = None
         self._player: MpvPlayer | None = None
         self._video_info = None
         self._page_url = ""
         self._pending_pipeline_info = None
+        self._log_expanded = True
 
         self._signals = _BridgeSignals()
         self._signals.subtitle_partial.connect(self._on_subtitle_partial)
@@ -66,110 +70,206 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setSpacing(8)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # 顶部工具栏
-        bar = QHBoxLayout()
-        self._url_input = QLineEdit()
-        self._url_input.setPlaceholderText("粘贴 B 站视频链接…")
-        bar.addWidget(self._url_input, stretch=1)
+        root.addWidget(self._build_top_bar())
 
-        self._play_btn = QPushButton("开始同传")
-        self._play_btn.clicked.connect(self._on_play)
-        bar.addWidget(self._play_btn)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(16, 14, 16, 12)
+        body_layout.setSpacing(12)
 
-        self._stop_btn = QPushButton("停止")
-        self._stop_btn.setEnabled(False)
-        self._stop_btn.clicked.connect(self._on_stop)
-        bar.addWidget(self._stop_btn)
-
-        self._settings_btn = QPushButton("⚙ 大模型配置")
-        self._settings_btn.clicked.connect(self._open_settings)
-        bar.addWidget(self._settings_btn)
-
-        root.addLayout(bar)
-
-        # 主区域：视频 | AI 面板
+        # 主区域：舞台 | AI
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(8)
 
-        video_wrap = QWidget()
-        v_layout = QVBoxLayout(video_wrap)
-        v_layout.setContentsMargins(0, 0, 0, 0)
-        v_layout.setSpacing(0)
-        # mpv embed 容器必须始终为空：任何子控件在 macOS 上都会导致黑屏
-        self._video_container = QWidget()
-        self._video_container.setMinimumSize(640, 360)
-        self._video_container.setStyleSheet("background: #111;")
-        self._video_container.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
-        self._video_container.setAttribute(
-            Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True
-        )
-        v_layout.addWidget(self._video_container, stretch=1)
-        # 字幕作为兄弟控件，绝不挂到 embed 容器上
-        self._subtitle = SubtitleOverlay()
-        v_layout.addWidget(self._subtitle)
-        splitter.addWidget(video_wrap)
-
+        splitter.addWidget(self._build_stage())
         self._ai_panel = AiPanel()
-        self._ai_panel.setMinimumWidth(380)
+        self._ai_panel.setMinimumWidth(360)
+        self._ai_panel.setObjectName("aiPanel")
         splitter.addWidget(self._ai_panel)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
-        root.addWidget(splitter, stretch=1)
+        splitter.setSizes([900, 420])
+        body_layout.addWidget(splitter, stretch=1)
 
-        # 信息行
-        info = QHBoxLayout()
-        self._title_label = QLabel("等待输入链接")
-        self._title_label.setStyleSheet("color: #666;")
-        info.addWidget(self._title_label)
-        info.addStretch()
-        self._model_label = QLabel()
-        self._model_label.setStyleSheet("color: #888; font-size: 12px;")
-        info.addWidget(self._model_label)
-        root.addLayout(info)
-
-        # 运行日志面板
-        log_bar = QHBoxLayout()
-        log_title = QLabel("运行日志")
-        log_title.setStyleSheet("font-weight: 600; color: #444;")
-        log_bar.addWidget(log_title)
-        log_bar.addStretch()
-        self._clear_log_btn = QPushButton("清空日志")
-        self._clear_log_btn.clicked.connect(self._clear_log)
-        log_bar.addWidget(self._clear_log_btn)
-        root.addLayout(log_bar)
-
-        self._log_panel = QTextEdit()
-        self._log_panel.setReadOnly(True)
-        self._log_panel.setMinimumHeight(140)
-        self._log_panel.setMaximumHeight(220)
-        self._log_panel.setStyleSheet(
-            """
-            QTextEdit {
-                font-family: Menlo, Monaco, Consolas, monospace;
-                font-size: 12px;
-                background: #1e1e1e;
-                color: #d4d4d4;
-                border: 1px solid #333;
-                border-radius: 6px;
-                padding: 6px;
-            }
-            """
-        )
-        root.addWidget(self._log_panel)
-        self._append_log("应用已启动，等待输入 B 站链接…")
+        body_layout.addWidget(self._build_log_strip())
+        root.addWidget(body, stretch=1)
 
         self.setStatusBar(QStatusBar())
-        self.statusBar().showMessage("就绪 · PyQt6 主壳 + 可选 Electron 前端")
+        self.statusBar().showMessage("就绪")
 
         if not MpvPlayer.is_available():
             self.statusBar().showMessage("警告: 未安装 mpv，请运行 brew install mpv")
 
+    def _build_top_bar(self) -> QWidget:
+        bar = QWidget()
+        bar.setObjectName("topBar")
+        bar.setFixedHeight(64)
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(20, 10, 16, 10)
+        layout.setSpacing(12)
+
+        brand_col = QVBoxLayout()
+        brand_col.setSpacing(0)
+        brand_col.setContentsMargins(0, 0, 8, 0)
+        brand = QLabel("本地同声传译")
+        brand.setObjectName("brandTitle")
+        brand_sub = QLabel("播放器")
+        brand_sub.setObjectName("brandSub")
+        brand_col.addWidget(brand)
+        brand_col.addWidget(brand_sub)
+        layout.addLayout(brand_col)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.VLine)
+        divider.setStyleSheet("color: #e5e7eb; max-width: 1px;")
+        layout.addWidget(divider)
+
+        self._url_input = QLineEdit()
+        self._url_input.setPlaceholderText("粘贴视频链接（Bilibili / YouTube）…")
+        self._url_input.setMinimumWidth(280)
+        layout.addWidget(self._url_input, stretch=1)
+
+        self._play_btn = QPushButton("开始同传")
+        self._play_btn.setObjectName("primaryBtn")
+        self._play_btn.clicked.connect(self._on_play)
+        layout.addWidget(self._play_btn)
+
+        self._stop_btn = QPushButton("停止")
+        self._stop_btn.setEnabled(False)
+        self._stop_btn.clicked.connect(self._on_stop)
+        layout.addWidget(self._stop_btn)
+
+        self._settings_btn = QPushButton("设置")
+        self._settings_btn.clicked.connect(self._open_settings)
+        layout.addWidget(self._settings_btn)
+
+        return bar
+
+    def _build_stage(self) -> QWidget:
+        stage = QWidget()
+        stage.setObjectName("stageCard")
+        layout = QVBoxLayout(stage)
+        layout.setContentsMargins(12, 12, 12, 10)
+        layout.setSpacing(8)
+
+        # 标题行
+        info = QHBoxLayout()
+        info.setSpacing(8)
+        self._title_label = QLabel("等待输入链接")
+        self._title_label.setObjectName("videoTitle")
+        info.addWidget(self._title_label, stretch=1)
+        self._model_label = QLabel()
+        self._model_label.setObjectName("modelMeta")
+        self._model_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        info.addWidget(self._model_label)
+        layout.addLayout(info)
+
+        # 视频舞台（mpv 独立窗口时显示提示；内嵌时仍需空容器）
+        video_wrap = QWidget()
+        video_wrap.setObjectName("videoStage")
+        # 重叠布局：容器始终参与布局（保证 winId），提示层按需显隐
+        grid = QGridLayout(video_wrap)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+
+        # mpv embed 容器必须始终为空：任何子控件在 macOS 上都会导致黑屏
+        self._video_container = QWidget()
+        self._video_container.setMinimumSize(640, 320)
+        self._video_container.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        self._video_container.setAttribute(
+            Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True
+        )
+        self._video_container.setStyleSheet("background: transparent;")
+        grid.addWidget(self._video_container, 0, 0)
+
+        self._stage_hint_wrap = QWidget()
+        self._stage_hint_wrap.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        self._stage_hint_wrap.setStyleSheet("background: transparent;")
+        hint_layout = QVBoxLayout(self._stage_hint_wrap)
+        hint_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint_layout.setContentsMargins(24, 24, 24, 24)
+        hint_layout.setSpacing(6)
+        self._stage_hint = QLabel("视频画面")
+        self._stage_hint.setObjectName("stageHint")
+        self._stage_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._stage_hint_sub = QLabel(
+            "开始同传后，画面通常在独立 mpv 窗口播放\n"
+            "本区域用于内嵌预览（macOS 可能不可用）"
+        )
+        self._stage_hint_sub.setObjectName("stageHintSmall")
+        self._stage_hint_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._stage_hint_sub.setWordWrap(True)
+        hint_layout.addWidget(self._stage_hint)
+        hint_layout.addWidget(self._stage_hint_sub)
+        grid.addWidget(self._stage_hint_wrap, 0, 0)
+
+        layout.addWidget(video_wrap, stretch=1)
+
+        # 字幕条（兄弟控件，绝不挂到 embed 容器）
+        self._subtitle = SubtitleOverlay()
+        layout.addWidget(self._subtitle)
+
+        return stage
+
+    def _build_log_strip(self) -> QWidget:
+        strip = QWidget()
+        strip.setObjectName("logStrip")
+        layout = QVBoxLayout(strip)
+        layout.setContentsMargins(12, 8, 12, 10)
+        layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        self._log_heading = QLabel("运行日志")
+        self._log_heading.setObjectName("logHeading")
+        header.addWidget(self._log_heading)
+        header.addStretch()
+
+        self._clear_log_btn = QPushButton("清空")
+        self._clear_log_btn.setObjectName("ghostBtn")
+        self._clear_log_btn.clicked.connect(self._clear_log)
+        header.addWidget(self._clear_log_btn)
+
+        self._toggle_log_btn = QPushButton("收起")
+        self._toggle_log_btn.setObjectName("ghostBtn")
+        self._toggle_log_btn.clicked.connect(self._toggle_log)
+        header.addWidget(self._toggle_log_btn)
+        layout.addLayout(header)
+
+        self._log_panel = QTextEdit()
+        self._log_panel.setObjectName("logPanel")
+        self._log_panel.setReadOnly(True)
+        self._log_panel.setMinimumHeight(100)
+        self._log_panel.setMaximumHeight(160)
+        self._log_panel.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        layout.addWidget(self._log_panel)
+
+        self._append_log("应用已启动，等待输入视频链接…")
+        return strip
+
+    def _toggle_log(self) -> None:
+        self._log_expanded = not self._log_expanded
+        self._log_panel.setVisible(self._log_expanded)
+        self._toggle_log_btn.setText("收起" if self._log_expanded else "展开")
+
+    def _set_stage_hint_visible(self, visible: bool) -> None:
+        self._stage_hint_wrap.setVisible(visible)
+
     def _refresh_model_label(self) -> None:
         cfg = settings_manager.data
         self._model_label.setText(
-            f"翻译:{cfg.translate_model} | 总结:{cfg.summary_model} | "
-            f"导图:{cfg.mindmap_model} | ASR:{cfg.whisper_model}"
+            f"翻译 {cfg.translate_model}  ·  总结 {cfg.summary_model}  ·  "
+            f"导图 {cfg.mindmap_model}  ·  ASR {cfg.whisper_model}"
         )
 
     def _open_settings(self) -> None:
@@ -180,11 +280,11 @@ class MainWindow(QMainWindow):
     def _on_play(self) -> None:
         url = self._url_input.text().strip()
         if not url:
-            QMessageBox.warning(self, "提示", "请输入 B 站视频链接")
+            QMessageBox.warning(self, "提示", "请输入视频链接（Bilibili / YouTube）")
             return
         settings_manager.reload()
         if not settings_manager.data.dashscope_api_key:
-            QMessageBox.warning(self, "缺少 API Key", "请点击「大模型配置」设置 API Key")
+            QMessageBox.warning(self, "缺少 API Key", "请点击「设置」配置 API Key")
             return
 
         self._page_url = url
@@ -194,14 +294,17 @@ class MainWindow(QMainWindow):
         self._subtitle.clear()
         self._clear_log()
         self._append_log(f"开始处理: {url}")
+        self._stage_hint.setText("正在解析…")
+        self._stage_hint_sub.setText("请稍候")
+        self._set_stage_hint_visible(True)
         self.statusBar().showMessage("正在解析视频…")
 
         threading.Thread(target=self._load_and_start, args=(url,), daemon=True).start()
 
     def _load_and_start(self, page_url: str) -> None:
         try:
-            self._emit_log("正在解析 B 站链接…")
-            info = resolve_bilibili_url(page_url)
+            self._emit_log("正在解析视频链接…")
+            info = resolve_video_url(page_url)
             self._video_info = info
             transcript_store.start_session(info.title, page_url)
             self._emit_log(f"解析成功: {info.title}")
@@ -228,7 +331,6 @@ class MainWindow(QMainWindow):
 
         self._pending_play_info = info
         self._emit_log("正在初始化 mpv 播放器…")
-        # 延迟到事件循环下一拍，确保视频容器已 show 且有有效 winId
         QTimer.singleShot(0, self._attach_and_play)
 
     def _attach_and_play(self) -> None:
@@ -239,24 +341,49 @@ class MainWindow(QMainWindow):
 
         try:
             self._player = MpvPlayer(self._video_container, on_log=self._emit_log)
-            self._emit_log("正在启动 mpv（嵌入优先，失败则独立窗口）…")
+            self._emit_log("正在启动 mpv（macOS 默认系统独立窗口）…")
             self._player.attach()
-            self._emit_log(f"正在播放视频流: {info.url[:80]}…")
+            self._emit_log(
+                f"正在播放视频流: vcodec={getattr(info, 'vcodec', None)} "
+                f"h={getattr(info, 'height', None)} "
+                f"url={info.url[:80]}…"
+            )
             self._player.play(info.url, referer=info.webpage_url)
-            mode = "嵌入" if self._player.is_embedded else "独立窗口"
-            self._emit_log(f"视频播放器已启动 ({mode})")
+            mode = getattr(self._player, "playback_mode", None) or (
+                "embedded" if self._player.is_embedded else "external"
+            )
+            mode_cn = {
+                "embedded": "主界面内嵌",
+                "external": "python-mpv 独立窗口",
+                "subprocess": "系统 mpv 独立窗口",
+            }.get(mode, mode)
+            self._emit_log(f"视频播放器已启动 ({mode_cn} / {mode})")
             if not self._player.is_embedded:
-                self._signals.status.emit("视频在独立 mpv 窗口中播放")
+                self._signals.status.emit(
+                    "请查看弹出窗口：「本地同声传译 · 视频画面」"
+                )
                 self._title_label.setText(
-                    f"{info.title}  ·  画面在独立 mpv 窗口（勿关）"
+                    f"{info.title}  ·  画面在独立 mpv 窗口"
                 )
+                self._stage_hint.setText("画面已在独立窗口")
+                self._stage_hint_sub.setText(
+                    "请查看标题为「本地同声传译 · 视频画面」的 mpv 窗口\n"
+                    "勿关闭该窗口；此处显示实时字幕"
+                )
+                self._set_stage_hint_visible(True)
                 self._emit_log(
-                    "INFO macOS 默认独立 mpv 窗口以避免嵌入黑屏；"
-                    "若需尝试嵌入请设置环境变量 ETC_MPV_EMBED=1"
+                    "INFO 画面在独立系统 mpv 窗口（非主界面内嵌），"
+                    "窗口标题「本地同声传译 · 视频画面」，会短暂置顶。"
+                    "嵌入调试: ETC_MPV_EMBED=1；python-mpv: ETC_MPV_PYTHON=1"
                 )
+            else:
+                self._set_stage_hint_visible(False)
         except Exception as exc:
             self._emit_log(f"ERROR 视频播放失败: {exc}")
             self._signals.status.emit(f"视频播放失败: {exc}")
+            self._stage_hint.setText("播放失败")
+            self._stage_hint_sub.setText(str(exc))
+            self._set_stage_hint_visible(True)
             return
 
         if self._pipeline:
@@ -299,6 +426,12 @@ class MainWindow(QMainWindow):
             self._player.stop()
         self._reset_play_controls()
         self._subtitle.clear()
+        self._stage_hint.setText("视频画面")
+        self._stage_hint_sub.setText(
+            "开始同传后，画面通常在独立 mpv 窗口播放\n"
+            "本区域用于内嵌预览（macOS 可能不可用）"
+        )
+        self._set_stage_hint_visible(True)
         self._emit_log("已停止")
         self.statusBar().showMessage("已停止")
 

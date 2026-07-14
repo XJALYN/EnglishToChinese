@@ -19,7 +19,7 @@ if sys.platform != "win32":
 
 
 class AudioExtractor:
-    """用 yt-dlp 拉取 B 站音频并解码为 int16 PCM；失败时回退 ffmpeg + Referer."""
+    """用 yt-dlp 拉取视频音频并解码为 int16 PCM；失败时回退 ffmpeg + Referer."""
 
     def __init__(
         self,
@@ -83,7 +83,7 @@ class AudioExtractor:
         ytdlp_cmd = [
             "yt-dlp",
             "-f",
-            "bestaudio",
+            "bestaudio/best",
             "-o",
             "-",
             "--no-playlist",
@@ -92,6 +92,20 @@ class AudioExtractor:
             "--limit-rate",
             "2M",
         ]
+        # Chrome TLS 指纹：缓解 Anaconda OpenSSL 访问 YouTube 的 SSL EOF
+        try:
+            import curl_cffi  # noqa: F401
+
+            ytdlp_cmd += ["--impersonate", "chrome"]
+        except ImportError:
+            pass
+        # YouTube 备用播放客户端（默认 web 握手失败时仍可走 android）
+        host = (self.page_url or "").lower()
+        if "youtube.com" in host or "youtu.be" in host:
+            ytdlp_cmd += [
+                "--extractor-args",
+                "youtube:player_client=android,web",
+            ]
         if self.start_offset > 0:
             ytdlp_cmd += ["--download-sections", f"*{self.start_offset}-"]
         ytdlp_cmd.append(self.page_url)
@@ -284,7 +298,7 @@ class AudioExtractor:
         if chunks_sent == 0 and not self._stop.is_set():
             self._log(
                 "ERROR 未能提取到音频。请确认链接有效、已安装 yt-dlp/ffmpeg，"
-                "且网络可访问 B 站。"
+                "且网络可访问视频站点（必要时: pip install -U yt-dlp 'curl_cffi>=0.10'）。"
             )
         elif chunks_sent > 0:
             self._log(f"音频提取结束，共输出 {chunks_sent} 个片段")

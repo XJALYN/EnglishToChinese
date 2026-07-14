@@ -21,11 +21,14 @@ os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = os.path.join(
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from src.ui.main_window import MainWindow
+from src.ui.theme import application_qss
 
 
 def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("本地同声传译播放器")
+    app.setStyle("Fusion")
+    app.setStyleSheet(application_qss())
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
