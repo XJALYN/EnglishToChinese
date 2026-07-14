@@ -1,0 +1,20 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f0f1a; color: #e2e8f0; min-height: 100vh; }
+header { padding: 20px 28px; border-bottom: 1px solid #1e293b; }
+header h1 { font-size: 1.3rem; }
+header p { color: #64748b; font-size: 0.85rem; margin-top: 6px; }
+code { background: #1e293b; padding: 2px 6px; border-radius: 4px; }
+.tabs { display: flex; gap: 4px; padding: 12px 28px; background: #111827; }
+.tab { background: transparent; border: 1px solid #334155; color: #94a3b8; padding: 8px 18px; border-radius: 8px; cursor: pointer; }
+.tab.active { background: #6366f1; border-color: #6366f1; color: #fff; }
+.panel { display: none; padding: 24px 28px; }
+.panel.active { display: block; }
+form label { display: block; margin-bottom: 14px; font-size: 0.9rem; color: #94a3b8; }
+form input, form select { display: block; width: 100%; max-width: 480px; margin-top: 4px; padding: 8px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; }
+form button { margin-top: 12px; padding: 10px 24px; background: #6366f1; border: none; border-radius: 8px; color: #fff; cursor: pointer; font-size: 0.95rem; }
+.toolbar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.toolbar button { padding: 8px 16px; background: #1e293b; border: 1px solid #475569; border-radius: 8px; color: #e2e8f0; cursor: pointer; }
+.toolbar button:hover { background: #334155; }
+.output { background: #1e293b; border-radius: 12px; padding: 20px; min-height: 300px; line-height: 1.8; white-space: pre-wrap; }
+.mermaid { background: #1e293b; border-radius: 12px; padding: 24px; min-height: 400px; display: flex; justify-content: center; }
+#settings-status { margin-top: 12px; color: #4ade80; font-size: 0.85rem; }

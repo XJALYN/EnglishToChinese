@@ -1,0 +1,13 @@
+{
+  "name": "english-to-chinese",
+  "version": "1.0.0",
+  "description": "本地同声传译 + AI 总结/思维导图",
+  "main": "main.js",
+  "scripts": {
+    "electron": "electron .",
+    "dev": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <title>同声传译 · Electron</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>🎬 同声传译 AI 助手</h1>
+    <p>Electron 前端 · Python 后端 · 视频播放请用 <code>python main.py</code></p>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="settings">大模型配置</button>
+    <button class="tab" data-tab="summary">AI 总结</button>
+    <button class="tab" data-tab="mindmap">思维导图</button>
+  </nav>
+
+  <section id="settings" class="panel active">
+    <form id="settings-form">
+      <label>API Key <input type="password" id="api-key" /></label>
+      <label>翻译模型 <select id="translate-model"></select></label>
+      <label>总结模型 <select id="summary-model"></select></label>
+      <label>导图模型 <select id="mindmap-model"></select></label>
+      <label>ASR 模型
+        <select id="whisper-model">
+          <option>tiny</option><option>base</option><option>small</option><option>medium</option>
+        </select>
+      </label>
+      <label>TTS 音色 <input id="tts-voice" /></label>
+      <label>HF 镜像 <input id="hf-endpoint" /></label>
+      <button type="submit">保存配置</button>
+    </form>
+    <p id="settings-status"></p>
+  </section>
+
+  <section id="summary" class="panel">
+    <div class="toolbar">
+      <button id="btn-summary">✨ AI 一键总结</button>
+      <button id="export-summary-md">导出 MD</button>
+      <button id="export-summary-html">导出 HTML</button>
+    </div>
+    <div id="summary-output" class="output"></div>
+  </section>
+
+  <section id="mindmap" class="panel">
+    <div class="toolbar">
+      <button id="btn-mindmap">🧠 生成思维导图</button>
+      <button id="export-mindmap-md">导出 MD</button>
+      <button id="export-mindmap-html">导出 HTML</button>
+    </div>
+    <pre id="mindmap-output" class="mermaid"></pre>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
