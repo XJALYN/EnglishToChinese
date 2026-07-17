@@ -161,4 +161,4 @@ python -m http.server 8080
 
 ## 开源协议
 
-若仓库根目录已包含 `LICENSE` 文件，以该文件为准；尚未添加时欢迎在 Issue 中讨论协议选择。
+本项目采用 [GNU General Public License v2.0](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)（GPL-2.0）发布，详见仓库根目录 [`LICENSE`](https://github.com/XJALYN/EnglishToChinese/blob/main/LICENSE)。

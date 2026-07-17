@@ -161,4 +161,4 @@ Issues and PRs welcome: https://github.com/XJALYN/EnglishToChinese/issues
 
 ## License
 
-If a `LICENSE` file exists at the repo root, that file is authoritative. Otherwise, feel free to open an issue to discuss licensing.
+This project is released under the [GNU General Public License v2.0](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html) (GPL-2.0). See [`LICENSE`](https://github.com/XJALYN/EnglishToChinese/blob/main/LICENSE) at the repository root.
