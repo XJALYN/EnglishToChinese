@@ -8,6 +8,8 @@
 
 Watch English videos from **Bilibili / YouTube** with **local streaming simultaneous interpretation**: ASR → LLM translation → CosyVoice TTS, plus **one-click AI summary**, **mind maps**, and export.
 
+**Homepage**: https://xjalyn.github.io/EnglishToChinese/
+
 <p align="center">
   <video src="demo.mp4" controls width="720" poster="docs/logo.svg">
     Demo video: local simultaneous interpretation player

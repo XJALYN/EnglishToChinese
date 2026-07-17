@@ -8,6 +8,8 @@
 
 B 站 / YouTube 等英文视频的 **本地流式同声传译**：ASR → 大模型翻译 → CosyVoice TTS，并支持 **AI 一键总结**、**思维导图** 与导出。
 
+**项目主页**：https://xjalyn.github.io/EnglishToChinese/
+
 <p align="center">
   <video src="demo.mp4" controls width="720" poster="docs/logo.svg">
     演示视频：本地同声传译播放器
