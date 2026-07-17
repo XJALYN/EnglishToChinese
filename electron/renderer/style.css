@@ -15,6 +15,10 @@ form button { margin-top: 12px; padding: 10px 24px; background: #6366f1; border:
 .toolbar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .toolbar button { padding: 8px 16px; background: #1e293b; border: 1px solid #475569; border-radius: 8px; color: #e2e8f0; cursor: pointer; }
 .toolbar button:hover { background: #334155; }
+.toolbar-sep { width: 1px; height: 24px; background: #334155; margin: 0 4px; }
+#mindmap-zoom-pct { min-width: 44px; text-align: center; color: #94a3b8; font-size: 0.85rem; }
+#mindmap-viewport { overflow: auto; max-height: calc(100vh - 220px); background: #1e293b; border-radius: 12px; padding: 24px; min-height: 400px; }
+#mindmap-scale { transform-origin: center top; transition: transform 0.12s ease-out; display: flex; justify-content: center; }
+#mindmap-viewport .mermaid { background: transparent; padding: 0; min-height: unset; display: flex; justify-content: center; }
 .output { background: #1e293b; border-radius: 12px; padding: 20px; min-height: 300px; line-height: 1.8; white-space: pre-wrap; }
-.mermaid { background: #1e293b; border-radius: 12px; padding: 24px; min-height: 400px; display: flex; justify-content: center; }
 #settings-status { margin-top: 12px; color: #4ade80; font-size: 0.85rem; }

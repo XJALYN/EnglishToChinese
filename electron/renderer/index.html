@@ -57,8 +57,17 @@
       <button id="btn-mindmap">🧠 生成思维导图</button>
       <button id="export-mindmap-md">导出 MD</button>
       <button id="export-mindmap-html">导出 HTML</button>
+      <span class="toolbar-sep"></span>
+      <button id="mindmap-zoom-out" title="缩小">−</button>
+      <span id="mindmap-zoom-pct">100%</span>
+      <button id="mindmap-zoom-in" title="放大">+</button>
+      <button id="mindmap-zoom-reset">重置</button>
     </div>
-    <pre id="mindmap-output" class="mermaid"></pre>
+    <div id="mindmap-viewport">
+      <div id="mindmap-scale">
+        <pre id="mindmap-output" class="mermaid"></pre>
+      </div>
+    </div>
   </section>
 
   <script src="app.js"></script>

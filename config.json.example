@@ -1,0 +1,22 @@
+{
+  "llm_provider": "dashscope",
+  "llm_api_key": "sk-your-key-here",
+  "llm_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "provider_credentials": {
+    "dashscope": {
+      "api_key": "sk-your-key-here",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    }
+  },
+  "dashscope_api_key": "sk-your-key-here",
+  "translate_model": "qwen-turbo",
+  "summary_model": "qwen-plus",
+  "mindmap_model": "qwen-plus",
+  "whisper_model": "base",
+  "tts_voice": "longxiaochun_v3",
+  "hf_endpoint": "https://hf-mirror.com",
+  "interpretation_delay": 1.5,
+  "startup_delay": 1.0,
+  "chunk_seconds": 2.0,
+  "chunk_overlap": 0.3
+}

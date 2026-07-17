@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="EnglishToChinese logo">
+  <defs>
+    <linearGradient id="wave" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#2DD4BF"/>
+      <stop offset="55%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#FB923C"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#122033"/>
+      <stop offset="100%" stop-color="#0B1420"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#plate)"/>
+  <circle cx="64" cy="64" r="46" fill="none" stroke="#1E3A4F" stroke-width="2"/>
+  <!-- Left EN mark -->
+  <text x="28" y="72" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="22" font-weight="700" fill="#E2E8F0">EN</text>
+  <!-- Right - mark -->
+  <text x="86" y="73" font-family="PingFang SC, Hiragino Sans GB, Noto Sans SC, sans-serif" font-size="24" font-weight="700" fill="#FB923C">-</text>
+  <!-- Center waveform bridge -->
+  <path d="M48 64 C52 48, 56 80, 60 64 S68 48, 72 64 S76 80, 80 64"
+        fill="none" stroke="url(#wave)" stroke-width="4.5" stroke-linecap="round"/>
+  <circle cx="64" cy="64" r="3.2" fill="#F8FAFC"/>
+</svg>

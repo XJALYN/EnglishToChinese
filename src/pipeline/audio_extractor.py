@@ -5,7 +5,6 @@ from __future__ import annotations
 import subprocess
 import sys
 import threading
-import time
 from typing import Callable
 
 import numpy as np
@@ -31,6 +30,7 @@ class AudioExtractor:
         stream_url: str | None = None,
         referer: str | None = None,
         startup_delay: float = 4.0,
+        get_media_position: Callable[[], float] | None = None,
     ):
         self.page_url = page_url
         self.on_chunk = on_chunk
@@ -39,6 +39,8 @@ class AudioExtractor:
         self.stream_url = stream_url
         self.referer = referer or page_url
         self.startup_delay = startup_delay
+        # 延迟结束后用播放器进度校准起点，避免「画面已前进、音频从 0 开始」
+        self.get_media_position = get_media_position
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._procs: list[subprocess.Popen] = []
@@ -49,16 +51,32 @@ class AudioExtractor:
         self._thread.start()
 
     def stop(self) -> None:
+        """Fast, non-blocking: signal stop and kill subprocesses; never join on caller."""
         self._stop.set()
-        for proc in self._procs:
+        procs = list(self._procs)
+        self._procs.clear()
+        for proc in procs:
             try:
                 proc.terminate()
             except OSError:
                 pass
-        if self._thread:
-            self._thread.join(timeout=3)
-            self._thread = None
-        self._procs.clear()
+
+        def _reap() -> None:
+            for proc in procs:
+                try:
+                    proc.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                except OSError:
+                    pass
+
+        if procs:
+            threading.Thread(target=_reap, daemon=True).start()
+        # Daemon extractor thread exits once stdout closes or _stop is set; do not join here.
+        self._thread = None
 
     def _log(self, msg: str) -> None:
         if self.on_log:
@@ -92,20 +110,21 @@ class AudioExtractor:
             "--limit-rate",
             "2M",
         ]
-        # Chrome TLS 指纹：缓解 Anaconda OpenSSL 访问 YouTube 的 SSL EOF
-        try:
-            import curl_cffi  # noqa: F401
-
-            ytdlp_cmd += ["--impersonate", "chrome"]
-        except ImportError:
-            pass
-        # YouTube 备用播放客户端（默认 web 握手失败时仍可走 android）
+        # YouTube：只用 android 客户端（本机 Anaconda OpenSSL / curl_cffi 不稳定）
         host = (self.page_url or "").lower()
         if "youtube.com" in host or "youtu.be" in host:
             ytdlp_cmd += [
                 "--extractor-args",
-                "youtube:player_client=android,web",
+                "youtube:player_client=android",
             ]
+        else:
+            # 非 YouTube 可选用 Chrome 指纹；失败则依赖默认请求栈
+            try:
+                import curl_cffi  # noqa: F401
+
+                ytdlp_cmd += ["--impersonate", "chrome"]
+            except ImportError:
+                pass
         if self.start_offset > 0:
             ytdlp_cmd += ["--download-sections", f"*{self.start_offset}-"]
         ytdlp_cmd.append(self.page_url)
@@ -226,10 +245,15 @@ class AudioExtractor:
                     pass
 
     def _pump_pcm(self, stdout) -> int:
-        chunk_samples = int(
-            settings_manager.data.sample_rate * settings_manager.data.chunk_seconds
-        )
+        cfg = settings_manager.data
+        sample_rate = cfg.sample_rate
+        chunk_seconds = cfg.chunk_seconds
+        overlap = min(max(cfg.chunk_overlap, 0.0), chunk_seconds * 0.8)
+        hop_seconds = chunk_seconds - overlap
+        chunk_samples = int(sample_rate * chunk_seconds)
+        hop_samples = max(int(sample_rate * hop_seconds), 1)
         bytes_per_chunk = chunk_samples * 2
+        bytes_per_hop = hop_samples * 2
         buffer = b""
         chunk_index = 0
         chunks_sent = 0
@@ -241,38 +265,42 @@ class AudioExtractor:
             buffer += data
             while len(buffer) >= bytes_per_chunk:
                 raw = buffer[:bytes_per_chunk]
-                buffer = buffer[bytes_per_chunk:]
-                pcm = np.frombuffer(raw, dtype=np.int16)
-                timestamp = self.start_offset + chunk_index * (
-                    settings_manager.data.chunk_seconds
-                    - settings_manager.data.chunk_overlap
-                )
+                # 保留 overlap，时间戳与 pacing 按 hop 前进（修复原先「读满 chunk 却按 hop 计时」漂移）
+                buffer = buffer[bytes_per_hop:]
+                pcm = np.frombuffer(raw, dtype=np.int16).copy()
+                timestamp = self.start_offset + chunk_index * hop_seconds
                 self.on_chunk(pcm, timestamp)
                 chunk_index += 1
                 chunks_sent += 1
-                if not self._stop.is_set():
-                    if chunks_sent == 1:
-                        self._log("INFO 首个 PCM 片段已输出")
-                    time.sleep(
-                        settings_manager.data.chunk_seconds
-                        - settings_manager.data.chunk_overlap
+                if chunks_sent == 1:
+                    self._log(
+                        f"INFO 首个 PCM 片段已输出 "
+                        f"(offset={self.start_offset:.1f}s, hop={hop_seconds:.1f}s)"
                     )
+                # 与画面实时轴对齐：每个 hop 输出一块，可被 stop 打断
+                if self._stop.wait(hop_seconds):
+                    return chunks_sent
 
         return chunks_sent
 
-    def _run(self) -> None:
-        if self.startup_delay > 0:
+    def _align_start_offset(self) -> None:
+        """用当前播放进度校准音频起点，保证 ASR/TTS 与画面同轴."""
+        if not self.get_media_position:
+            return
+        try:
+            pos = float(self.get_media_position() or 0.0)
+        except Exception:
+            return
+        if pos > self.start_offset + 0.25:
             self._log(
-                f"INFO 延迟 {self.startup_delay:.0f}s 启动音频提取，"
-                "优先让视频缓冲…"
+                f"INFO 按播放进度校准音频起点: {self.start_offset:.1f}s → {pos:.1f}s"
             )
-            if self._stop.wait(self.startup_delay):
-                return
+            self.start_offset = pos
 
-        self._log("音频提取启动 (yt-dlp → ffmpeg)…")
-
-        pipeline = self._spawn_pipeline()
+    def _extract_once(self) -> int:
+        """跑一轮 yt-dlp→ffmpeg，失败则 ffmpeg 直链；返回输出 chunk 数."""
         chunks_sent = 0
+        pipeline = self._spawn_pipeline()
 
         if pipeline:
             ytdlp_proc, ffmpeg_proc = pipeline
@@ -294,6 +322,38 @@ class AudioExtractor:
                 self._wait_proc(proc, "ffmpeg")
                 if proc.returncode not in (0, None) and chunks_sent == 0:
                     self._log(f"ERROR ffmpeg 直链失败，退出码 {proc.returncode}")
+        return chunks_sent
+
+    def _run(self) -> None:
+        if self.startup_delay > 0:
+            self._log(
+                f"INFO 延迟 {self.startup_delay:.0f}s 启动音频提取，"
+                "优先让视频缓冲…"
+            )
+            if self._stop.wait(self.startup_delay):
+                return
+
+        # 延迟结束后再读播放器位置，避免仍从 0s 拉音频造成音画错位
+        self._align_start_offset()
+        self._log(
+            f"音频提取启动 (yt-dlp → ffmpeg, start_offset={self.start_offset:.1f}s)…"
+        )
+
+        chunks_sent = self._extract_once()
+
+        # seek/download-sections 可能导致无音频：回退到片头，优先保证有声
+        if (
+            chunks_sent == 0
+            and not self._stop.is_set()
+            and self.start_offset > 0.5
+        ):
+            self._log(
+                f"WARN start_offset={self.start_offset:.1f}s 无音频，"
+                "回退到 0s 重新提取以保证配音可用"
+            )
+            self.start_offset = 0.0
+            self._procs.clear()
+            chunks_sent = self._extract_once()
 
         if chunks_sent == 0 and not self._stop.is_set():
             self._log(

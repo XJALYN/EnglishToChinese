@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>Jensen Huang wishes Stanford graduates ample doses of pain & suffering #stanford #success #business</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      margin: 0;
+      padding: 16px 20px 24px;
+    }
+    h1 {
+      text-align: center;
+      font-size: 1.25rem;
+      margin: 0 0 16px;
+    }
+    .zoom-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .zoom-toolbar button {
+      min-width: 36px;
+      padding: 6px 12px;
+      border: 1px solid #475569;
+      border-radius: 8px;
+      background: #1e293b;
+      color: #e2e8f0;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .zoom-toolbar button:hover { background: #334155; }
+    #zoom-pct {
+      min-width: 48px;
+      text-align: center;
+      font-size: 0.85rem;
+      color: #94a3b8;
+    }
+    #mindmap-wrap {
+      overflow: auto;
+      max-height: calc(100vh - 120px);
+      padding: 8px 0 16px;
+    }
+    #mindmap-scale {
+      transform-origin: center top;
+      transition: transform 0.12s ease-out;
+    }
+    .mermaid { display: flex; justify-content: center; }
+  </style>
+</head>
+<body>
+  <h1>Jensen Huang wishes Stanford graduates ample doses of pain & suffering #stanford #success #business</h1>
+  <div class="zoom-toolbar">
+    <button type="button" id="zoom-out" title="缩小">−</button>
+    <span id="zoom-pct">100%</span>
+    <button type="button" id="zoom-in" title="放大">+</button>
+    <button type="button" id="zoom-reset" title="重置缩放">重置</button>
+  </div>
+  <div id="mindmap-wrap">
+    <div id="mindmap-scale">
+      <pre class="mermaid">
+mindmap
+  root((痛苦锻造伟大))
+    核心理念
+      高期望削弱韧性
+      痛苦淬炼品格
+      伟大源于苦难
+    个人经历
+      安全成长环境
+      主动制造挫折
+      终身践行磨难
+    企业哲学
+      “痛苦”成文化词
+      团队使命锤炼
+      韧性驱动创新
+    毕业祝福
+      颠覆温情范式
+      拥抱不适境遇
+      超越卓越伟大
+      </pre>
+    </div>
+  </div>
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+    let mindmapScale = 1;
+    const MIN_SCALE = 0.25;
+    const MAX_SCALE = 3;
+    const scaleEl = document.getElementById('mindmap-scale');
+    const pctEl = document.getElementById('zoom-pct');
+
+    function applyMindmapZoom() {
+      scaleEl.style.transform = 'scale(' + mindmapScale + ')';
+      pctEl.textContent = Math.round(mindmapScale * 100) + '%';
+    }
+    function mindmapZoomBy(delta) {
+      mindmapScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, mindmapScale + delta));
+      applyMindmapZoom();
+    }
+    function mindmapZoomIn() { mindmapZoomBy(0.15); }
+    function mindmapZoomOut() { mindmapZoomBy(-0.15); }
+    function mindmapZoomReset() {
+      mindmapScale = 1;
+      applyMindmapZoom();
+    }
+    document.getElementById('zoom-in').addEventListener('click', mindmapZoomIn);
+    document.getElementById('zoom-out').addEventListener('click', mindmapZoomOut);
+    document.getElementById('zoom-reset').addEventListener('click', mindmapZoomReset);
+    document.getElementById('mindmap-wrap').addEventListener('wheel', (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        mindmapZoomBy(e.deltaY < 0 ? 0.1 : -0.1);
+      }
+    }, { passive: false });
+  </script>
+</body>
+</html>

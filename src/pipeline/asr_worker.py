@@ -57,13 +57,22 @@ class AsrWorker:
             beam_size=1,
         )
 
+        parts: list[str] = []
+        seg_ts = timestamp
         for seg in segments:
             text = seg.text.strip()
             if not text or len(text) < 2:
                 continue
-            key = f"{timestamp:.1f}:{text}"
-            with self._lock:
-                if key in self._seen:
-                    continue
-                self._seen.add(key)
-            self.on_segment(text, timestamp + seg.start)
+            parts.append(text)
+            seg_ts = min(seg_ts, timestamp + float(seg.start))
+
+        if not parts:
+            return
+
+        merged = " ".join(parts)
+        key = f"{seg_ts:.1f}:{merged}"
+        with self._lock:
+            if key in self._seen:
+                return
+            self._seen.add(key)
+        self.on_segment(merged, seg_ts)

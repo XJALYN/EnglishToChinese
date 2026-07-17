@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 from src.config import settings_manager
 from src.pipeline.pipeline_manager import InterpretationPipeline
 from src.player.bilibili import resolve_video_url
-from src.player.mpv_player import MpvPlayer
+from src.player.mpv_player import WINDOW_TITLE, MpvPlayer
 from src.store.transcript_store import transcript_store
 from src.ui.ai_panel import AiPanel
 from src.ui.settings_dialog import SettingsDialog
@@ -40,6 +40,7 @@ class _BridgeSignals(QObject):
     log = pyqtSignal(str)
     playback_ready = pyqtSignal(object)
     reset_controls = pyqtSignal()
+    stop_complete = pyqtSignal()
 
 
 class MainWindow(QMainWindow):
@@ -54,6 +55,9 @@ class MainWindow(QMainWindow):
         self._page_url = ""
         self._pending_pipeline_info = None
         self._log_expanded = True
+        self._stopping = False
+        self._stop_done = threading.Event()
+        self._stop_done.set()
 
         self._signals = _BridgeSignals()
         self._signals.subtitle_partial.connect(self._on_subtitle_partial)
@@ -62,6 +66,7 @@ class MainWindow(QMainWindow):
         self._signals.log.connect(self._append_log)
         self._signals.playback_ready.connect(self._start_playback)
         self._signals.reset_controls.connect(self._reset_play_controls)
+        self._signals.stop_complete.connect(self._on_stop_complete)
 
         self._build_ui()
         self._refresh_model_label()
@@ -92,7 +97,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self._ai_panel)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
-        splitter.setSizes([900, 420])
+        splitter.setSizes([860, 480])
         body_layout.addWidget(splitter, stretch=1)
 
         body_layout.addWidget(self._build_log_strip())
@@ -156,18 +161,30 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(12, 12, 12, 10)
         layout.setSpacing(8)
 
-        # 标题行
+        # 标题行：长标题截断，避免把窗口撑宽
         info = QHBoxLayout()
-        info.setSpacing(8)
+        info.setSpacing(10)
+        self._title_full = "等待输入链接"
+        self._title_suffix = ""
         self._title_label = QLabel("等待输入链接")
         self._title_label.setObjectName("videoTitle")
+        self._title_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        self._title_label.setMinimumWidth(0)
+        self._title_label.setWordWrap(False)
         info.addWidget(self._title_label, stretch=1)
         self._model_label = QLabel()
         self._model_label.setObjectName("modelMeta")
         self._model_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        info.addWidget(self._model_label)
+        self._model_label.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred
+        )
+        self._model_label.setMinimumWidth(0)
+        self._model_label.setWordWrap(False)
+        info.addWidget(self._model_label, stretch=0)
         layout.addLayout(info)
 
         # 视频舞台（mpv 独立窗口时显示提示；内嵌时仍需空容器）
@@ -201,8 +218,8 @@ class MainWindow(QMainWindow):
         self._stage_hint.setObjectName("stageHint")
         self._stage_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._stage_hint_sub = QLabel(
-            "开始同传后，画面通常在独立 mpv 窗口播放\n"
-            "本区域用于内嵌预览（macOS 可能不可用）"
+            "开始同传后，画面在独立 mpv 窗口播放\n"
+            f"窗口标题：「{WINDOW_TITLE}」"
         )
         self._stage_hint_sub.setObjectName("stageHintSmall")
         self._stage_hint_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -212,6 +229,20 @@ class MainWindow(QMainWindow):
         grid.addWidget(self._stage_hint_wrap, 0, 0)
 
         layout.addWidget(video_wrap, stretch=1)
+
+        focus_row = QHBoxLayout()
+        focus_row.setSpacing(8)
+        self._video_alert = QLabel("")
+        self._video_alert.setObjectName("videoAlert")
+        self._video_alert.setWordWrap(True)
+        self._video_alert.setVisible(False)
+        focus_row.addWidget(self._video_alert, stretch=1)
+        self._focus_video_btn = QPushButton("前置视频窗口")
+        self._focus_video_btn.setObjectName("ghostBtn")
+        self._focus_video_btn.setVisible(False)
+        self._focus_video_btn.clicked.connect(self._on_focus_video)
+        focus_row.addWidget(self._focus_video_btn)
+        layout.addLayout(focus_row)
 
         # 字幕条（兄弟控件，绝不挂到 embed 容器）
         self._subtitle = SubtitleOverlay()
@@ -265,12 +296,61 @@ class MainWindow(QMainWindow):
     def _set_stage_hint_visible(self, visible: bool) -> None:
         self._stage_hint_wrap.setVisible(visible)
 
-    def _refresh_model_label(self) -> None:
-        cfg = settings_manager.data
-        self._model_label.setText(
-            f"翻译 {cfg.translate_model}  ·  总结 {cfg.summary_model}  ·  "
-            f"导图 {cfg.mindmap_model}  ·  ASR {cfg.whisper_model}"
+    def _set_video_title(self, title: str, *, suffix: str = "") -> None:
+        self._title_full = title or ""
+        self._title_suffix = suffix or ""
+        tip = (
+            f"{self._title_full}  ·  {self._title_suffix}"
+            if self._title_suffix
+            else self._title_full
         )
+        self._title_label.setToolTip(tip)
+        self._elide_video_title()
+
+    def _elide_video_title(self) -> None:
+        full = self._title_full
+        if self._title_suffix:
+            full = f"{self._title_full}  ·  {self._title_suffix}"
+        width = max(self._title_label.width() - 8, 80)
+        elided = self._title_label.fontMetrics().elidedText(
+            full, Qt.TextElideMode.ElideRight, width
+        )
+        self._title_label.setText(elided)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._elide_model_label()
+        self._elide_video_title()
+
+    def _refresh_model_label(self) -> None:
+        from src.config import LLM_PROVIDERS
+
+        cfg = settings_manager.data
+        provider_label = LLM_PROVIDERS.get(cfg.llm_provider, {}).get(
+            "label", cfg.llm_provider
+        )
+        self._model_label.setText(
+            f"{provider_label}  ·  翻译 {cfg.translate_model}  ·  "
+            f"总结 {cfg.summary_model}  ·  导图 {cfg.mindmap_model}  ·  "
+            f"ASR {cfg.whisper_model}"
+        )
+        self._model_label.setToolTip(self._model_label.text())
+        # 模型元信息过长时也截断，避免撑开窗口
+        QTimer.singleShot(0, self._elide_model_label)
+
+    def _elide_model_label(self) -> None:
+        full = self._model_label.toolTip() or self._model_label.text()
+        if not full:
+            return
+        # 最多约占舞台宽度 40%，且不超过 420px
+        stage_w = max(self._title_label.parentWidget().width() if self._title_label.parentWidget() else 800, 400)
+        max_w = min(420, int(stage_w * 0.4))
+        elided = self._model_label.fontMetrics().elidedText(
+            full, Qt.TextElideMode.ElideRight, max_w
+        )
+        self._model_label.setText(elided)
+        self._model_label.setMaximumWidth(max_w)
+        self._elide_video_title()
 
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self)
@@ -283,7 +363,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "请输入视频链接（Bilibili / YouTube）")
             return
         settings_manager.reload()
-        if not settings_manager.data.dashscope_api_key:
+        if not settings_manager.data.active_api_key():
             QMessageBox.warning(self, "缺少 API Key", "请点击「设置」配置 API Key")
             return
 
@@ -323,7 +403,7 @@ class MainWindow(QMainWindow):
 
     def _start_playback(self, info) -> None:
         self._emit_log("主线程: 开始启动播放与同声传译管线")
-        self._title_label.setText(info.title)
+        self._set_video_title(info.title)
 
         if self._player:
             self._emit_log("正在销毁旧播放器…")
@@ -341,6 +421,8 @@ class MainWindow(QMainWindow):
 
         try:
             self._player = MpvPlayer(self._video_container, on_log=self._emit_log)
+            self._player.window_opened.connect(self._on_video_window_opened)
+            self._player.window_failed.connect(self._on_video_window_failed)
             self._emit_log("正在启动 mpv（macOS 默认系统独立窗口）…")
             self._player.attach()
             self._emit_log(
@@ -348,7 +430,8 @@ class MainWindow(QMainWindow):
                 f"h={getattr(info, 'height', None)} "
                 f"url={info.url[:80]}…"
             )
-            self._player.play(info.url, referer=info.webpage_url)
+            page = info.webpage_url or self._page_url
+            self._player.play(info.url, referer=info.webpage_url, page_url=page)
             mode = getattr(self._player, "playback_mode", None) or (
                 "embedded" if self._player.is_embedded else "external"
             )
@@ -357,33 +440,36 @@ class MainWindow(QMainWindow):
                 "external": "python-mpv 独立窗口",
                 "subprocess": "系统 mpv 独立窗口",
             }.get(mode, mode)
-            self._emit_log(f"视频播放器已启动 ({mode_cn} / {mode})")
+            src = getattr(self._player, "source_mode", "") or ""
+            self._emit_log(f"视频播放器已启动 ({mode_cn} / {mode} / source={src})")
             if not self._player.is_embedded:
-                self._signals.status.emit(
-                    "请查看弹出窗口：「本地同声传译 · 视频画面」"
-                )
-                self._title_label.setText(
-                    f"{info.title}  ·  画面在独立 mpv 窗口"
-                )
-                self._stage_hint.setText("画面已在独立窗口")
+                self._signals.status.emit(f"视频窗口已打开（标题: {WINDOW_TITLE}），请查看独立窗口")
+                self._set_video_title(info.title, suffix="画面在独立 mpv 窗口")
+                self._stage_hint.setText("视频窗口已打开")
                 self._stage_hint_sub.setText(
-                    "请查看标题为「本地同声传译 · 视频画面」的 mpv 窗口\n"
+                    f"标题：「{WINDOW_TITLE}」\n"
                     "勿关闭该窗口；此处显示实时字幕"
                 )
                 self._set_stage_hint_visible(True)
+                self._show_video_alert(
+                    f"视频窗口已打开（标题: {WINDOW_TITLE}），请查看独立窗口"
+                )
+                self._focus_video_btn.setVisible(True)
                 self._emit_log(
-                    "INFO 画面在独立系统 mpv 窗口（非主界面内嵌），"
-                    "窗口标题「本地同声传译 · 视频画面」，会短暂置顶。"
-                    "嵌入调试: ETC_MPV_EMBED=1；python-mpv: ETC_MPV_PYTHON=1"
+                    f"INFO 画面在独立系统 mpv 窗口，标题「{WINDOW_TITLE}」，"
+                    "会短暂置顶；可点「前置视频窗口」。"
                 )
             else:
                 self._set_stage_hint_visible(False)
+                self._focus_video_btn.setVisible(False)
+                self._video_alert.setVisible(False)
         except Exception as exc:
             self._emit_log(f"ERROR 视频播放失败: {exc}")
             self._signals.status.emit(f"视频播放失败: {exc}")
             self._stage_hint.setText("播放失败")
             self._stage_hint_sub.setText(str(exc))
             self._set_stage_hint_visible(True)
+            self._show_video_alert(f"播放失败: {exc}")
             return
 
         if self._pipeline:
@@ -401,10 +487,22 @@ class MainWindow(QMainWindow):
             return
 
         self._emit_log("正在创建同声传译管线…")
+        start_offset = 0.0
+        if self._player:
+            try:
+                start_offset = float(self._player.get_position() or 0.0)
+            except Exception:
+                start_offset = 0.0
+
         self._pipeline = InterpretationPipeline(
             self._page_url,
             stream_url=info.url,
             referer=info.webpage_url,
+            start_offset=start_offset,
+            get_media_position=lambda: (
+                self._player.get_position() if self._player else 0.0
+            ),
+            on_tts_active=self._on_tts_active,
             on_subtitle_partial=lambda t: self._signals.subtitle_partial.emit(t),
             on_subtitle_final=lambda e, c, ts: self._signals.subtitle_final.emit(e, c, ts),
             on_status=lambda s: self._signals.status.emit(s),
@@ -412,28 +510,87 @@ class MainWindow(QMainWindow):
         )
         self._emit_log("正在启动管线 (音频提取 / ASR / 翻译)…")
         self._pipeline.start()
+        if self._player:
+            self._player.set_volume(40, mute=False)
         self._emit_log(
-            "INFO 已启用播放优化: mpv 60s 缓存, 音频提取延迟 4s, "
-            "yt-dlp 限速 2M/s"
+            f"INFO 音频策略: 原声40%保底; 配音延迟 "
+            f"{settings_manager.data.interpretation_delay:.0f}s; "
+            f"起点≈{start_offset:.1f}s"
         )
-        self.statusBar().showMessage("播放中 · 同声传译已启动")
+        self.statusBar().showMessage("播放中 · 同声传译已启动（原声已开启作保底）")
 
     def _on_stop(self) -> None:
-        if self._pipeline:
-            self._pipeline.stop()
-            self._pipeline = None
+        if self._stopping:
+            return
+        self._stopping = True
+        self._stop_done.clear()
+        self._stop_btn.setEnabled(False)
+        self._stop_btn.setText("正在停止…")
+        self._play_btn.setEnabled(False)
+        self._emit_log("INFO 开始停止播放与同声传译…")
+        self.statusBar().showMessage("正在停止…")
+
+        # Stop video immediately so playback feels responsive.
         if self._player:
             self._player.stop()
+
+        threading.Thread(target=self._stop_worker, daemon=True).start()
+
+    def _stop_worker(self) -> None:
+        try:
+            pipeline = self._pipeline
+            self._pipeline = None
+            if pipeline:
+                pipeline.stop()
+        except Exception as exc:
+            self._signals.log.emit(f"ERROR 停止管线失败: {exc}")
+        finally:
+            self._signals.stop_complete.emit()
+
+    def _on_stop_complete(self) -> None:
+        self._stopping = False
+        self._stop_done.set()
+        self._stop_btn.setText("停止")
         self._reset_play_controls()
         self._subtitle.clear()
         self._stage_hint.setText("视频画面")
         self._stage_hint_sub.setText(
-            "开始同传后，画面通常在独立 mpv 窗口播放\n"
-            "本区域用于内嵌预览（macOS 可能不可用）"
+            "开始同传后，画面在独立 mpv 窗口播放\n"
+            f"窗口标题：「{WINDOW_TITLE}」"
         )
         self._set_stage_hint_visible(True)
-        self._emit_log("已停止")
+        self._focus_video_btn.setVisible(False)
+        self._video_alert.setVisible(False)
+        self._emit_log("INFO 停止完成")
         self.statusBar().showMessage("已停止")
+
+    def _show_video_alert(self, text: str) -> None:
+        self._video_alert.setText(text)
+        self._video_alert.setVisible(True)
+
+    def _on_video_window_opened(self, title: str) -> None:
+        msg = f"视频窗口已打开（标题: {title}），请查看独立窗口"
+        self._show_video_alert(msg)
+        self._focus_video_btn.setVisible(True)
+        self._stage_hint.setText("视频窗口已打开")
+        self._stage_hint_sub.setText(f"标题：「{title}」\n可点右侧按钮前置窗口")
+        self._signals.status.emit(msg)
+        self._emit_log(f"INFO {msg}")
+
+    def _on_video_window_failed(self, reason: str) -> None:
+        msg = f"视频窗口未能出画: {reason}"
+        self._show_video_alert(msg)
+        self._stage_hint.setText("未检测到画面")
+        self._stage_hint_sub.setText(reason)
+        self._signals.status.emit(msg)
+        self._emit_log(f"ERROR {msg}")
+        QMessageBox.warning(self, "视频画面", msg)
+
+    def _on_focus_video(self) -> None:
+        if self._player:
+            self._player.focus_window()
+            self._emit_log(f"INFO 再次前置「{WINDOW_TITLE}」")
+            self.statusBar().showMessage(f"已尝试前置「{WINDOW_TITLE}」")
 
     def _reset_play_controls(self) -> None:
         self._play_btn.setEnabled(True)
@@ -462,8 +619,25 @@ class MainWindow(QMainWindow):
     def _on_status(self, msg: str) -> None:
         self.statusBar().showMessage(msg)
 
+    def _on_tts_active(self, active: bool) -> None:
+        """TTS 播出时压低原声，避免盖过中文配音；结束或失败则恢复保底音量."""
+        if not self._player:
+            return
+        try:
+            if active:
+                self._player.set_volume(8, mute=False)
+            else:
+                self._player.set_volume(40, mute=False)
+        except Exception:
+            pass
+
     def closeEvent(self, event):
-        self._on_stop()
+        if self._stopping:
+            self._stop_done.wait(timeout=2.0)
+        elif self._pipeline or self._player:
+            self._on_stop()
+            self._stop_done.wait(timeout=2.0)
         if self._player:
             self._player.destroy()
+            self._player = None
         super().closeEvent(event)

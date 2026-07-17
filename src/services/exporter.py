@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from src.services.markdown_render import summary_export_html
 from src.services.mindmap import mindmap_to_html
 from src.store.transcript_store import SessionTranscript
 
@@ -28,12 +29,9 @@ def export_summary(
     elif fmt == "txt":
         path.write_text(f"{title}\n{'='*40}\n\n{summary}", encoding="utf-8")
     elif fmt == "html":
-        body = summary.replace("\n", "<br>")
-        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>{title}</title>
-<style>body{{font-family:-apple-system,sans-serif;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.8;color:#333}}
-h1{{color:#111}}blockquote{{border-left:4px solid #6366f1;padding-left:16px;color:#555}}</style>
-</head><body><h1>{title}</h1>{body}</body></html>"""
+        html = summary_export_html(
+            summary, title, datetime.now().isoformat()
+        )
         path.write_text(html, encoding="utf-8")
     elif fmt == "json":
         path.write_text(

@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EnglishToChinese · 本地同声传译播放器</title>
+  <meta name="description" content="B 站 / YouTube 本地流式同声传译：ASR → 翻译 → TTS，附带 AI 总结与思维导图。开源，PyQt6 + FastAPI。" />
+  <meta property="og:title" content="EnglishToChinese · 本地同声传译播放器" />
+  <meta property="og:description" content="看英文视频，听中文同传。本地 ASR + 多厂商大模型翻译 / TTS。" />
+  <meta property="og:image" content="https://xjalyn.github.io/EnglishToChinese/docs/logo.svg" />
+  <link rel="icon" href="docs/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Syne:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #070d14;
+      --ink-2: #0b1420;
+      --panel: #121c2a;
+      --line: rgba(148, 163, 184, 0.18);
+      --text: #e8eef7;
+      --muted: #94a3b8;
+      --teal: #2dd4bf;
+      --sky: #38bdf8;
+      --amber: #fb923c;
+      --font-display: "Syne", "Noto Sans SC", sans-serif;
+      --font-body: "IBM Plex Sans", "Noto Sans SC", sans-serif;
+      --max: 1080px;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-body);
+      color: var(--text);
+      background: var(--ink);
+      line-height: 1.65;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background:
+        radial-gradient(ellipse 80% 55% at 15% -10%, rgba(45, 212, 191, 0.16), transparent 55%),
+        radial-gradient(ellipse 70% 50% at 90% 10%, rgba(251, 146, 60, 0.12), transparent 50%),
+        radial-gradient(ellipse 60% 40% at 50% 100%, rgba(56, 189, 248, 0.08), transparent 55%),
+        linear-gradient(180deg, #070d14 0%, #0b1420 45%, #081018 100%);
+      animation: aurora 18s ease-in-out infinite alternate;
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      opacity: 0.35;
+      background-image:
+        linear-gradient(rgba(148, 163, 184, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.04) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 20%, transparent 75%);
+      pointer-events: none;
+    }
+
+    @keyframes aurora {
+      from { filter: hue-rotate(0deg) saturate(1); transform: scale(1); }
+      to { filter: hue-rotate(12deg) saturate(1.15); transform: scale(1.03); }
+    }
+
+    a { color: var(--teal); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    a:hover { color: var(--sky); }
+
+    .wrap {
+      width: min(100% - 2.5rem, var(--max));
+      margin-inline: auto;
+    }
+
+    /* ── Nav ── */
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.1rem 0;
+      gap: 1rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      color: inherit;
+      text-decoration: none;
+      font-family: var(--font-display);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand img { width: 40px; height: 40px; border-radius: 10px; }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .lang-switch {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(18, 28, 42, 0.7);
+    }
+
+    .lang-switch button {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font: 600 0.8rem/1 var(--font-body);
+      padding: 0.45rem 0.75rem;
+      cursor: pointer;
+    }
+
+    .lang-switch button[aria-pressed="true"] {
+      background: rgba(45, 212, 191, 0.18);
+      color: var(--text);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      border-radius: 999px;
+      padding: 0.7rem 1.25rem;
+      font: 600 0.95rem/1 var(--font-body);
+      text-decoration: none;
+      border: 1px solid transparent;
+      transition: transform 0.25s var(--ease), background 0.25s, border-color 0.25s, color 0.25s;
+    }
+
+    .btn:hover { transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--teal), #0d9488);
+      color: #042f2e;
+    }
+
+    .btn-ghost {
+      border-color: var(--line);
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .btn-ghost:hover { border-color: rgba(45, 212, 191, 0.45); color: var(--teal); }
+
+    /* ── Hero ── */
+    .hero {
+      min-height: calc(100svh - 4.5rem);
+      display: grid;
+      align-content: center;
+      padding: 2.5rem 0 4rem;
+      gap: 1.75rem;
+    }
+
+    .hero-logo {
+      width: min(112px, 28vw);
+      height: auto;
+      border-radius: 24px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+      animation: float-logo 5.5s ease-in-out infinite;
+    }
+
+    @keyframes float-logo {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+
+    .hero h1 {
+      font-family: var(--font-display);
+      font-size: clamp(2.4rem, 7vw, 4.4rem);
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+      max-width: 14ch;
+      font-weight: 800;
+    }
+
+    .hero h1 .accent {
+      background: linear-gradient(100deg, var(--teal), var(--sky) 45%, var(--amber));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .hero-lead {
+      max-width: 38rem;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 2.4vw, 1.25rem);
+    }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+
+    .wave-stage {
+      margin-top: 1.5rem;
+      width: min(100%, 520px);
+      height: 64px;
+      opacity: 0.9;
+    }
+
+    /* Demo video */
+    .demo-video {
+      width: 100%;
+      max-width: 960px;
+      aspect-ratio: 16 / 9;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #000;
+      display: block;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+    }
+
+    .wave-stage path {
+      fill: none;
+      stroke: url(#heroWave);
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      stroke-dasharray: 420;
+      stroke-dashoffset: 420;
+      animation: draw-wave 2.8s var(--ease) forwards, pulse-wave 3.2s ease-in-out 2.8s infinite;
+    }
+
+    @keyframes draw-wave {
+      to { stroke-dashoffset: 0; }
+    }
+
+    @keyframes pulse-wave {
+      0%, 100% { opacity: 0.7; }
+      50% { opacity: 1; }
+    }
+
+    /* ── Sections ── */
+    section {
+      padding: 4.5rem 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .section-kicker {
+      color: var(--teal);
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 0.75rem;
+    }
+
+    .section-title {
+      font-family: var(--font-display);
+      font-size: clamp(1.7rem, 4vw, 2.4rem);
+      letter-spacing: -0.03em;
+      margin-bottom: 0.6rem;
+    }
+
+    .section-desc {
+      color: var(--muted);
+      max-width: 40rem;
+      margin-bottom: 2rem;
+    }
+
+    .feature-list {
+      display: grid;
+      gap: 1.75rem;
+    }
+
+    @media (min-width: 720px) {
+      .feature-list { grid-template-columns: 1fr 1fr; gap: 2rem 2.5rem; }
+    }
+
+    .feature h3 {
+      font-family: var(--font-display);
+      font-size: 1.15rem;
+      margin-bottom: 0.4rem;
+      letter-spacing: -0.02em;
+    }
+
+    .feature p { color: var(--muted); font-size: 0.98rem; }
+
+    .feature .mark {
+      display: inline-block;
+      width: 2rem;
+      height: 3px;
+      border-radius: 2px;
+      background: linear-gradient(90deg, var(--teal), var(--amber));
+      margin-bottom: 0.75rem;
+    }
+
+    /* Tech strip — not cards, just a flowing list */
+    .tech-flow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem 1.1rem;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .tech-flow strong { color: var(--text); font-weight: 600; }
+    .tech-flow .sep { opacity: 0.35; }
+
+    /* Install */
+    pre, code {
+      font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    }
+
+    .code-block {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1.1rem 1.2rem;
+      overflow-x: auto;
+      font-size: 0.88rem;
+      line-height: 1.7;
+      color: #cbd5e1;
+      margin: 1rem 0 1.5rem;
+    }
+
+    .code-block .cm { color: #64748b; }
+    .code-block .ok { color: var(--teal); }
+
+    .steps {
+      display: grid;
+      gap: 1.25rem;
+    }
+
+    .step-num {
+      font-family: var(--font-display);
+      color: var(--amber);
+      font-weight: 700;
+      font-size: 0.9rem;
+      margin-bottom: 0.25rem;
+    }
+
+    /* Reveal */
+    .reveal {
+      opacity: 0;
+      transform: translateY(22px);
+      transition: opacity 0.7s var(--ease), transform 0.7s var(--ease);
+    }
+
+    .reveal.is-in {
+      opacity: 1;
+      transform: none;
+    }
+
+    .reveal-delay-1 { transition-delay: 0.08s; }
+    .reveal-delay-2 { transition-delay: 0.16s; }
+    .reveal-delay-3 { transition-delay: 0.24s; }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 2.5rem 0 3rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    footer .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    footer .links { display: flex; flex-wrap: wrap; gap: 1rem; }
+
+    [data-i18n-hide] { display: none !important; }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      body::before,
+      .hero-logo,
+      .wave-stage path,
+      .reveal {
+        animation: none !important;
+        transition: none !important;
+        opacity: 1 !important;
+        transform: none !important;
+        stroke-dashoffset: 0 !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="wrap">
+    <nav class="nav" aria-label="Primary">
+      <a class="brand" href="./">
+        <img src="docs/logo.svg" width="40" height="40" alt="" />
+        <span>EnglishToChinese</span>
+      </a>
+      <div class="nav-actions">
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button type="button" data-lang="zh" aria-pressed="true">中文</button>
+          <button type="button" data-lang="en" aria-pressed="false">EN</button>
+        </div>
+        <a class="btn btn-ghost" href="https://github.com/XJALYN/EnglishToChinese" data-i18n="navGithub">GitHub</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <img class="hero-logo" src="docs/logo.svg" width="112" height="112" alt="EnglishToChinese logo" />
+      <h1 id="hero-title">
+        <span data-i18n="heroTitle1">本地同声传译</span><br />
+        <span class="accent" data-i18n="heroTitle2">播放器</span>
+      </h1>
+      <p class="hero-lead" data-i18n="heroLead">
+        播放 B 站 / YouTube 等英文视频，本地 ASR 识别，大模型翻译与 CosyVoice TTS 实时中文播报；
+        还能一键 AI 总结、生成思维导图并导出。开源，可自托管。
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/XJALYN/EnglishToChinese" data-i18n="ctaStar">在 GitHub 查看源码</a>
+        <a class="btn btn-ghost" href="#demo" data-i18n="ctaDemo">观看演示</a>
+        <a class="btn btn-ghost" href="#install" data-i18n="ctaInstall">安装与运行</a>
+      </div>
+      <svg class="wave-stage" viewBox="0 0 520 64" aria-hidden="true">
+        <defs>
+          <linearGradient id="heroWave" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#2DD4BF"/>
+            <stop offset="50%" stop-color="#38BDF8"/>
+            <stop offset="100%" stop-color="#FB923C"/>
+          </linearGradient>
+        </defs>
+        <path d="M0 32 C40 8, 80 56, 120 32 S200 8, 240 32 320 56, 360 32 440 8, 480 32 520 48, 520 32"/>
+      </svg>
+    </section>
+
+    <section id="demo" class="wrap">
+      <p class="section-kicker reveal" data-i18n="demoKicker">Demo</p>
+      <h2 class="section-title reveal" data-i18n="demoTitle">产品演示</h2>
+      <p class="section-desc reveal" data-i18n="demoDesc">约 30 秒：打开链接、同声传译、AI 总结与思维导图一览。</p>
+      <video
+        class="demo-video reveal"
+        src="demo.mp4"
+        controls
+        playsinline
+        preload="metadata"
+        poster="docs/logo.svg"
+      >
+        <a href="demo.mp4" data-i18n="demoFallback">下载演示视频</a>
+      </video>
+    </section>
+
+    <section id="features" class="wrap">
+      <p class="section-kicker reveal" data-i18n="featKicker">Capabilities</p>
+      <h2 class="section-title reveal" data-i18n="featTitle">核心能力</h2>
+      <p class="section-desc reveal" data-i18n="featDesc">重活在本地 Python 管线完成；UI 用 PyQt6，可选 Electron 连接同一 FastAPI。</p>
+
+      <div class="feature-list">
+        <article class="feature reveal">
+          <span class="mark" aria-hidden="true"></span>
+          <h3 data-i18n="f1t">流式同声传译</h3>
+          <p data-i18n="f1d">yt-dlp 直链 → mpv 播放（原声可静音）→ faster-whisper ASR → 百炼等大模型翻译 → CosyVoice TTS，字幕实时叠加。</p>
+        </article>
+        <article class="feature reveal reveal-delay-1">
+          <span class="mark" aria-hidden="true"></span>
+          <h3 data-i18n="f2t">AI 一键总结</h3>
+          <p data-i18n="f2d">播放中累积双语字幕，调用大模型生成结构化 Markdown；可尝试拉取 B 站已有字幕作补充。</p>
+        </article>
+        <article class="feature reveal reveal-delay-2">
+          <span class="mark" aria-hidden="true"></span>
+          <h3 data-i18n="f3t">思维导图</h3>
+          <p data-i18n="f3d">基于字幕与总结生成 Mermaid mindmap，QWebEngine 预览，支持导出 Markdown / HTML。</p>
+        </article>
+        <article class="feature reveal reveal-delay-3">
+          <span class="mark" aria-hidden="true"></span>
+          <h3 data-i18n="f4t">多厂商大模型</h3>
+          <p data-i18n="f4d">可视化配置百炼 / OpenAI / DeepSeek / 自定义 OpenAI 兼容；翻译、总结、导图模型可分别指定。</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="stack" class="wrap">
+      <p class="section-kicker reveal" data-i18n="stackKicker">Stack</p>
+      <h2 class="section-title reveal" data-i18n="stackTitle">技术亮点</h2>
+      <p class="section-desc reveal" data-i18n="stackDesc">Python 负责播放、ASR、翻译与 TTS；可选 Electron 前端共用 API。</p>
+      <div class="tech-flow reveal">
+        <strong>PyQt6</strong><span class="sep">·</span>
+        <strong>mpv</strong><span class="sep">·</span>
+        <strong>faster-whisper</strong><span class="sep">·</span>
+        <strong>yt-dlp</strong><span class="sep">·</span>
+        <strong>FastAPI</strong><span class="sep">·</span>
+        <strong>DashScope / OpenAI 兼容</strong><span class="sep">·</span>
+        <strong>CosyVoice</strong><span class="sep">·</span>
+        <strong>Electron（可选）</strong>
+      </div>
+    </section>
+
+    <section id="install" class="wrap">
+      <p class="section-kicker reveal" data-i18n="instKicker">Get started</p>
+      <h2 class="section-title reveal" data-i18n="instTitle">安装与使用</h2>
+      <p class="section-desc reveal" data-i18n="instDesc">需要 Python 3、mpv、ffmpeg，以及至少一个大模型 API Key（见 .env.example）。</p>
+
+      <div class="steps">
+        <div class="reveal">
+          <div class="step-num" data-i18n="s1">01 · 依赖</div>
+          <pre class="code-block"><span class="ok">pip</span> install -r requirements.txt
+brew install mpv ffmpeg
+cp .env.example .env   <span class="cm"># 填入 LLM_API_KEY 等</span></pre>
+        </div>
+        <div class="reveal reveal-delay-1">
+          <div class="step-num" data-i18n="s2">02 · PyQt6 完整应用（推荐）</div>
+          <pre class="code-block"><span class="ok">python</span> main.py</pre>
+        </div>
+        <div class="reveal reveal-delay-2">
+          <div class="step-num" data-i18n="s3">03 · Electron + API（可选）</div>
+          <pre class="code-block"><span class="cm"># 终端 1</span>
+<span class="ok">python</span> run_api.py
+<span class="cm"># 终端 2</span>
+cd electron &amp;&amp; npm install &amp;&amp; npm run electron</pre>
+        </div>
+      </div>
+      <p class="section-desc reveal" style="margin-top:1rem" data-i18n="instNote">
+        视频播放在 PyQt6 主应用中；Electron 侧重 AI 配置、总结与思维导图。完整说明见 README。
+      </p>
+      <div class="cta-row reveal">
+        <a class="btn btn-ghost" href="https://github.com/XJALYN/EnglishToChinese/blob/main/README.md" data-i18n="readmeZh">中文 README</a>
+        <a class="btn btn-ghost" href="https://github.com/XJALYN/EnglishToChinese/blob/main/README.en.md" data-i18n="readmeEn">English README</a>
+      </div>
+    </section>
+
+    <section id="open-source" class="wrap">
+      <p class="section-kicker reveal" data-i18n="osKicker">Open source</p>
+      <h2 class="section-title reveal" data-i18n="osTitle">开源与贡献</h2>
+      <p class="section-desc reveal" data-i18n="osDesc">
+        代码托管于 GitHub。欢迎 Issue / PR。宣传页发布在 GitHub Pages。
+      </p>
+      <div class="cta-row reveal">
+        <a class="btn btn-primary" href="https://github.com/XJALYN/EnglishToChinese" data-i18n="osRepo">代码仓库</a>
+        <a class="btn btn-ghost" href="https://github.com/XJALYN/EnglishToChinese/issues" data-i18n="osIssues">提交 Issue</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap">
+    <div class="row">
+      <p data-i18n="footerCopy">© EnglishToChinese · 本地同声传译播放器</p>
+      <div class="links">
+        <a href="https://xjalyn.github.io/EnglishToChinese/">Pages</a>
+        <a href="https://github.com/XJALYN/EnglishToChinese">GitHub</a>
+        <a href="https://github.com/XJALYN/EnglishToChinese/blob/main/README.md">README</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const copy = {
+      zh: {
+        navGithub: "GitHub",
+        heroTitle1: "本地同声传译",
+        heroTitle2: "播放器",
+        heroLead: "播放 B 站 / YouTube 等英文视频，本地 ASR 识别，大模型翻译与 CosyVoice TTS 实时中文播报；还能一键 AI 总结、生成思维导图并导出。开源，可自托管。",
+        ctaStar: "在 GitHub 查看源码",
+        ctaDemo: "观看演示",
+        ctaInstall: "安装与运行",
+        demoKicker: "Demo",
+        demoTitle: "产品演示",
+        demoDesc: "约 30 秒：打开链接、同声传译、AI 总结与思维导图一览。",
+        demoFallback: "下载演示视频",
+        featKicker: "Capabilities",
+        featTitle: "核心能力",
+        featDesc: "重活在本地 Python 管线完成；UI 用 PyQt6，可选 Electron 连接同一 FastAPI。",
+        f1t: "流式同声传译",
+        f1d: "yt-dlp 直链 → mpv 播放（原声可静音）→ faster-whisper ASR → 百炼等大模型翻译 → CosyVoice TTS，字幕实时叠加。",
+        f2t: "AI 一键总结",
+        f2d: "播放中累积双语字幕，调用大模型生成结构化 Markdown；可尝试拉取 B 站已有字幕作补充。",
+        f3t: "思维导图",
+        f3d: "基于字幕与总结生成 Mermaid mindmap，QWebEngine 预览，支持导出 Markdown / HTML。",
+        f4t: "多厂商大模型",
+        f4d: "可视化配置百炼 / OpenAI / DeepSeek / 自定义 OpenAI 兼容；翻译、总结、导图模型可分别指定。",
+        stackKicker: "Stack",
+        stackTitle: "技术亮点",
+        stackDesc: "Python 负责播放、ASR、翻译与 TTS；可选 Electron 前端共用 API。",
+        instKicker: "Get started",
+        instTitle: "安装与使用",
+        instDesc: "需要 Python 3、mpv、ffmpeg，以及至少一个大模型 API Key（见 .env.example）。",
+        s1: "01 · 依赖",
+        s2: "02 · PyQt6 完整应用（推荐）",
+        s3: "03 · Electron + API（可选）",
+        instNote: "视频播放在 PyQt6 主应用中；Electron 侧重 AI 配置、总结与思维导图。完整说明见 README。",
+        readmeZh: "中文 README",
+        readmeEn: "English README",
+        osKicker: "Open source",
+        osTitle: "开源与贡献",
+        osDesc: "代码托管于 GitHub。欢迎 Issue / PR。宣传页发布在 GitHub Pages。",
+        osRepo: "代码仓库",
+        osIssues: "提交 Issue",
+        footerCopy: "© EnglishToChinese · 本地同声传译播放器",
+      },
+      en: {
+        navGithub: "GitHub",
+        heroTitle1: "Local simultaneous",
+        heroTitle2: "interpretation",
+        heroLead: "Play Bilibili / YouTube videos with on-device ASR, LLM translation, and CosyVoice TTS for live Chinese audio—plus AI summaries, mind maps, and export. Open source and self-hostable.",
+        ctaStar: "View on GitHub",
+        ctaDemo: "Watch demo",
+        ctaInstall: "Install & run",
+        demoKicker: "Demo",
+        demoTitle: "See it in action",
+        demoDesc: "About 30 seconds: open a link, live interpretation, AI summary, and mind map.",
+        demoFallback: "Download demo video",
+        featKicker: "Capabilities",
+        featTitle: "What it does",
+        featDesc: "Heavy lifting runs in a local Python pipeline; UI is PyQt6, with an optional Electron client on the same FastAPI.",
+        f1t: "Streaming interpretation",
+        f1d: "yt-dlp → mpv (mute original) → faster-whisper ASR → LLM translate → CosyVoice TTS, with live subtitle overlay.",
+        f2t: "One-click AI summary",
+        f2d: "Accumulates bilingual captions while playing, then asks the LLM for structured Markdown. Can pull existing Bilibili subtitles when available.",
+        f3t: "Mind maps",
+        f3d: "Builds Mermaid mindmaps from captions + summary, previews in QWebEngine, exports Markdown / HTML.",
+        f4t: "Multi-provider LLMs",
+        f4d: "Visual settings for DashScope, OpenAI, DeepSeek, or custom OpenAI-compatible APIs—separate models for translate / summary / mindmap.",
+        stackKicker: "Stack",
+        stackTitle: "Tech highlights",
+        stackDesc: "Python owns playback, ASR, translation, and TTS; optional Electron shares the API.",
+        instKicker: "Get started",
+        instTitle: "Install & use",
+        instDesc: "Needs Python 3, mpv, ffmpeg, and at least one LLM API key (see .env.example).",
+        s1: "01 · Dependencies",
+        s2: "02 · Full PyQt6 app (recommended)",
+        s3: "03 · Electron + API (optional)",
+        instNote: "Video plays in the PyQt6 app; Electron focuses on AI settings, summary, and mind maps. Full docs are in the README.",
+        readmeZh: "Chinese README",
+        readmeEn: "English README",
+        osKicker: "Open source",
+        osTitle: "Contribute",
+        osDesc: "Hosted on GitHub. Issues and PRs welcome. This landing page is published via GitHub Pages.",
+        osRepo: "Repository",
+        osIssues: "Open an issue",
+        footerCopy: "© EnglishToChinese · Local simultaneous interpretation player",
+      },
+    };
+
+    function setLang(lang) {
+      const dict = copy[lang] || copy.zh;
+      document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+      document.querySelectorAll("[data-i18n]").forEach((el) => {
+        const key = el.getAttribute("data-i18n");
+        if (dict[key] != null) el.textContent = dict[key];
+      });
+      document.querySelectorAll(".lang-switch button").forEach((btn) => {
+        btn.setAttribute("aria-pressed", String(btn.dataset.lang === lang));
+      });
+      try { localStorage.setItem("etc-lang", lang); } catch (_) {}
+      document.title = lang === "en"
+        ? "EnglishToChinese · Local Simultaneous Interpretation"
+        : "EnglishToChinese · 本地同声传译播放器";
+    }
+
+    document.querySelectorAll(".lang-switch button").forEach((btn) => {
+      btn.addEventListener("click", () => setLang(btn.dataset.lang));
+    });
+
+    try {
+      const saved = localStorage.getItem("etc-lang");
+      if (saved === "en" || saved === "zh") setLang(saved);
+    } catch (_) {}
+
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!reduceMotion && "IntersectionObserver" in window) {
+      const io = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((e) => {
+            if (e.isIntersecting) {
+              e.target.classList.add("is-in");
+              io.unobserve(e.target);
+            }
+          });
+        },
+        { rootMargin: "0px 0px -8% 0px", threshold: 0.12 }
+      );
+      document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+    } else {
+      document.querySelectorAll(".reveal").forEach((el) => el.classList.add("is-in"));
+    }
+  </script>
+</body>
+</html>

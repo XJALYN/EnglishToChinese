@@ -11,16 +11,37 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 from typing import Callable
+from urllib.parse import urlparse
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget
 
 _log = logging.getLogger(__name__)
 
+WINDOW_TITLE = "本地同声传译 · 视频画面"
+
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+_YTDL_FORMAT = (
+    "bestvideo[vcodec^=avc1][height<=720]+bestaudio/"
+    "bestvideo[height<=720]+bestaudio/"
+    "best[ext=mp4][height<=720]/"
+    "best[height<=720]/"
+    "best"
+)
+
+# YouTube 在部分环境（Anaconda OpenSSL / 代理）下，ffmpeg 直连 googlevideo TLS 失败；
+# 渐进式 18/mp4 经 yt-dlp 拉流再喂给 mpv 更可靠。
+_YTDL_PIPE_FORMAT = (
+    "best[ext=mp4][height<=720]/"
+    "best[height<=720]/"
+    "bestvideo[vcodec^=avc1][height<=720]+bestaudio/"
+    "best"
 )
 
 
@@ -94,13 +115,30 @@ def _mpv_common_kwargs() -> dict:
 def _set_http_headers(player, referer: str | None) -> None:
     if not referer:
         return
-    player["http-header-fields"] = f"Referer: {referer}\r\nUser-Agent: {_UA}\r\n"
+    # 禁止在值中嵌入 \\r\\n：python-mpv / mpv 选项解析会截断，导致 HTTP 400。
+    player["referrer"] = referer
+    player["user-agent"] = _UA
+
+
+def _is_youtube(url: str | None) -> bool:
+    if not url:
+        return False
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return (
+        host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be"}
+        or host.endswith(".youtube.com")
+    )
 
 
 class MpvPlayer(QObject):
     position_changed = pyqtSignal(float)
     duration_changed = pyqtSignal(float)
     playback_finished = pyqtSignal()
+    window_opened = pyqtSignal(str)  # window title
+    window_failed = pyqtSignal(str)  # reason
 
     def __init__(
         self,
@@ -114,8 +152,10 @@ class MpvPlayer(QObject):
         self._player = None
         self._embedded = False
         self._subprocess: subprocess.Popen | None = None
+        self._ytdlp_proc: subprocess.Popen | None = None
         self._ipc_path: str | None = None
         self._mode = "none"  # embedded | external | subprocess
+        self._source_mode = "none"  # cdn | ytdl-page | ytdl-pipe
         self._timer = QTimer(self)
         self._timer.setInterval(200)
         self._timer.timeout.connect(self._poll_position)
@@ -127,7 +167,9 @@ class MpvPlayer(QObject):
         self._ontop_clear_timer.timeout.connect(self._clear_ontop)
         self._pending_url: str | None = None
         self._pending_referer: str | None = None
-        self._fallback_done = False
+        self._pending_page_url: str | None = None
+        self._fallback_stage = 0  # 0=first try, 1=after cdn, 2=after ytdl-page, 3=done
+        self._window_title = WINDOW_TITLE
 
     def _log(self, msg: str) -> None:
         _log.info(msg)
@@ -176,7 +218,7 @@ class MpvPlayer(QObject):
             )
             self._log(
                 f"INFO 将使用系统 mpv 独立窗口（{reason}）；"
-                "播放时弹出「本地同声传译 · 视频画面」"
+                f"播放时弹出「{WINDOW_TITLE}」"
             )
             self._embedded = False
             self._mode = "subprocess"
@@ -241,8 +283,9 @@ class MpvPlayer(QObject):
             self._mode = "external"
             self._ontop_clear_timer.start(4000)
 
-        self._player.volume = 0
-        self._player.mute = True
+        # 保留降低后的原声作保底；TTS 播配音时会再 duck
+        self._player.volume = 40
+        self._player.mute = False
 
         @self._player.property_observer("video-params")
         def _on_video_params(_name, value):
@@ -261,56 +304,119 @@ class MpvPlayer(QObject):
             except Exception:
                 pass
 
-    def play(self, url: str, *, referer: str | None = None) -> None:
+    def play(
+        self,
+        url: str,
+        *,
+        referer: str | None = None,
+        page_url: str | None = None,
+    ) -> None:
         self._pending_url = url
         self._pending_referer = referer
-        self._fallback_done = False
+        self._pending_page_url = page_url or referer
+        self._fallback_stage = 0
 
         is_m4s = ".m4s" in url.lower()
         self.attach()
         self._log(
             f"INFO play(): mode={self._mode} "
             f"url_kind={'m4s-h264-video' if is_m4s else 'stream'} "
+            f"page={((page_url or referer) or '')[:60]} "
             f"url={url[:90]}…"
         )
 
         if self._mode == "subprocess" or self._subprocess is not None:
-            self._start_subprocess(url, referer)
-            # 校验子进程窗口是否解出视频
-            self._video_check_timer.start(3000)
+            self._start_best_effort()
             return
 
         _set_http_headers(self._player, referer)
         self._player.play(url)
         self._timer.start()
-        # 独立窗口与嵌入都要校验是否真的解出视频轨
         self._video_check_timer.start(2500)
 
-    def _verify_video_or_fallback(self) -> None:
-        """校验是否解出视频；python-mpv 失败则回退系统 mpv 子进程."""
-        if self._fallback_done:
+    def _start_best_effort(self) -> None:
+        """按可靠性：CDN(修 Referer) → 页面 ytdl → yt-dlp 管道."""
+        page = self._pending_page_url
+        url = self._pending_url
+        referer = self._pending_referer
+
+        # YouTube：本机 ffmpeg 常无法 TLS 访问 googlevideo，直接走管道
+        if page and _is_youtube(page):
+            self._log("INFO YouTube：优先 yt-dlp 管道喂给 mpv（规避 ffmpeg TLS）")
+            self._start_ytdlp_pipe(page)
+            # 管道首帧通常 8–15s，过早校验会误报失败
+            self._video_check_timer.start(14000)
             return
 
+        # 其它站点：先直链（Bilibili .m4s 需正确 Referer，通常 1–2s 出画）
+        if url:
+            self._start_subprocess_cdn(url, referer)
+            self._video_check_timer.start(3500)
+            return
+
+        if page:
+            self._start_subprocess_ytdl_page(page)
+            self._video_check_timer.start(12000)
+            return
+
+        self._log("ERROR 无可用播放 URL")
+        self.window_failed.emit("无可用播放 URL")
+
+    def _verify_video_or_fallback(self) -> None:
+        """校验是否解出视频；失败则按阶段回退."""
         if self._subprocess is not None:
+            alive = self._subprocess.poll() is None
             params = self._ipc_get("video-params")
             vo = self._ipc_get("current-vo")
             pos = self._ipc_get("time-pos")
-            has_video = bool(params) and bool(params.get("w"))
+            track_list = self._ipc_get("track-list")
+            has_video = bool(params) and isinstance(params, dict) and bool(params.get("w"))
+            vid_tracks = 0
+            if isinstance(track_list, list):
+                vid_tracks = sum(1 for t in track_list if t.get("type") == "video")
             self._log(
                 f"INFO 子进程视频校验: has_video={has_video} vo={vo} "
                 f"pos={pos} size="
-                f"{(params or {}).get('w')}x{(params or {}).get('h')}"
+                f"{(params or {}).get('w') if isinstance(params, dict) else None}x"
+                f"{(params or {}).get('h') if isinstance(params, dict) else None} "
+                f"alive={alive} pid={self._subprocess.pid} "
+                f"source={self._source_mode} video_tracks={vid_tracks}"
             )
-            if not has_video:
+            if has_video:
                 self._log(
-                    "ERROR 系统 mpv 仍无视频画面 — 请检查直链/Referer；"
-                    "CLI 可试: mpv --referrer=… <url>"
+                    f"INFO 系统 mpv 出画正常 — 请查看前置窗口「{WINDOW_TITLE}」"
                 )
-            else:
-                self._log(
-                    "INFO 系统 mpv 出画正常 — 请查看前置窗口"
-                    "「本地同声传译 · 视频画面」"
-                )
+                self._focus_mpv_window()
+                self.window_opened.emit(WINDOW_TITLE)
+                return
+
+            # 回退链
+            page = self._pending_page_url
+            if self._source_mode == "cdn" and page:
+                self._log("WARN CDN 直链无画面，回退 mpv --ytdl 页面 URL…")
+                self._fallback_stage = 1
+                self._start_subprocess_ytdl_page(page)
+                self._video_check_timer.start(14000)
+                return
+            if self._source_mode in ("cdn", "ytdl-page") and page:
+                self._log("WARN ytdl 页面模式无画面，回退 yt-dlp | mpv 管道…")
+                self._fallback_stage = 2
+                self._start_ytdlp_pipe(page)
+                self._video_check_timer.start(14000)
+                return
+
+            # 管道仍在拉流时再给一次机会（避免刚出画前误报）
+            if self._source_mode == "ytdl-pipe" and alive and self._fallback_stage < 3:
+                self._fallback_stage = 3
+                self._log("INFO yt-dlp 管道仍在缓冲，5s 后复检…")
+                self._video_check_timer.start(5000)
+                return
+
+            reason = (
+                f"系统 mpv 仍无视频画面 (source={self._source_mode}, alive={alive})"
+            )
+            self._log(f"ERROR {reason}")
+            self.window_failed.emit(reason)
             return
 
         params = None
@@ -337,6 +443,7 @@ class MpvPlayer(QObject):
                 f"INFO 出画正常 ({self._mode}): vo={vo}, "
                 f"size={params.get('w')}x{params.get('h')}"
             )
+            self.window_opened.emit(WINDOW_TITLE)
             return
 
         self._log(
@@ -346,15 +453,9 @@ class MpvPlayer(QObject):
         self._fallback_to_subprocess()
 
     def _fallback_to_subprocess(self) -> None:
-        if self._fallback_done:
+        if self._fallback_stage >= 3:
             return
-        self._fallback_done = True
-        url = self._pending_url
-        referer = self._pending_referer
-        if not url:
-            self._log("ERROR 无法回退：没有 pending URL")
-            return
-
+        self._fallback_stage = 3
         try:
             if self._player:
                 self._player.terminate()
@@ -362,54 +463,218 @@ class MpvPlayer(QObject):
             pass
         self._player = None
         self._embedded = False
-        self._start_subprocess(url, referer)
+        self._start_best_effort()
 
-    def _start_subprocess(self, url: str, referer: str | None) -> None:
-        if self._subprocess is not None:
+    def _stop_media_procs(self, *, wait: bool = False) -> None:
+        procs = [p for p in (self._subprocess, self._ytdlp_proc) if p is not None]
+        self._subprocess = None
+        self._ytdlp_proc = None
+        for proc in procs:
             try:
-                self._subprocess.terminate()
+                proc.terminate()
             except Exception:
                 pass
-            self._subprocess = None
+        if not procs:
+            return
 
-        sock_dir = tempfile.mkdtemp(prefix="etc_mpv_")
-        self._ipc_path = os.path.join(sock_dir, "mpv.sock")
-        header = f"Referer: {referer or ''}\r\nUser-Agent: {_UA}"
-        cmd = [
+        def _reap() -> None:
+            for proc in procs:
+                try:
+                    proc.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+
+        if wait:
+            _reap()
+        else:
+            threading.Thread(target=_reap, daemon=True).start()
+
+    def _base_mpv_cmd(self, sock: str) -> list[str]:
+        return [
             "mpv",
             "--force-window=yes",
             "--ontop",
             "--geometry=960x540+80+80",
             "--keep-open=yes",
-            "--mute=yes",
-            "--volume=0",
+            "--mute=no",
+            "--volume=40",
             "--osc=yes",
             "--hwdec=auto",
             "--vo=gpu",
-            f"--input-ipc-server={self._ipc_path}",
-            f"--http-header-fields={header}",
-            "--title=本地同声传译 · 视频画面",
-            url,
+            f"--input-ipc-server={sock}",
+            f"--title={WINDOW_TITLE}",
+            f"--user-agent={_UA}",
         ]
-        self._log(f"INFO 启动系统 mpv 子进程: {' '.join(cmd[:8])} …")
+
+    def _spawn_mpv(
+        self,
+        cmd: list[str],
+        *,
+        stdin=None,
+        source: str,
+    ) -> None:
+        # CRITICAL: 切勿 stderr=PIPE 且不读 — 管道塞满会使 mpv 卡死、无画面。
+        self._log(
+            f"INFO 启动系统 mpv ({source}) pid即将产生; args={cmd[:10]} …"
+        )
         try:
             self._subprocess = subprocess.Popen(
                 cmd,
+                stdin=stdin,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
             )
         except Exception as exc:
             self._log(f"ERROR 启动系统 mpv 失败: {exc}")
+            self.window_failed.emit(str(exc))
             return
 
         self._mode = "subprocess"
         self._embedded = False
+        self._source_mode = source
         self._timer.start()
         self._log(
-            "INFO 系统 mpv 已启动 — 应弹出标题为「本地同声传译 · 视频画面」的窗口"
+            f"INFO 系统 mpv 已启动 pid={self._subprocess.pid} source={source} "
+            f"— 应弹出标题「{WINDOW_TITLE}」"
         )
-        # briefly keep ontop then release
+        QTimer.singleShot(800, self._focus_mpv_window)
         QTimer.singleShot(5000, self._subprocess_clear_ontop)
+        # window_opened 仅在校验 has_video 后发出，避免「窗口开了但还没画面」误报
+
+    def _start_subprocess_cdn(self, url: str, referer: str | None) -> None:
+        self._stop_media_procs()
+        sock_dir = tempfile.mkdtemp(prefix="etc_mpv_")
+        self._ipc_path = os.path.join(sock_dir, "mpv.sock")
+        cmd = self._base_mpv_cmd(self._ipc_path)
+        # 使用独立 --referrer，禁止把 Referer/UA 塞进带 \\r\\n 的 http-header-fields
+        # （mpv 会截断选项 → Bilibili HTTP 400 → 黑屏/秒退）
+        if referer:
+            cmd.append(f"--referrer={referer}")
+        cmd.append(url)
+        self._spawn_mpv(cmd, source="cdn")
+
+    def _start_subprocess_ytdl_page(self, page_url: str) -> None:
+        self._stop_media_procs()
+        sock_dir = tempfile.mkdtemp(prefix="etc_mpv_")
+        self._ipc_path = os.path.join(sock_dir, "mpv.sock")
+        cmd = self._base_mpv_cmd(self._ipc_path)
+        cmd += [
+            "--ytdl=yes",
+            f"--ytdl-format={_YTDL_FORMAT}",
+        ]
+        if _is_youtube(page_url):
+            cmd.append(
+                "--ytdl-raw-options-append=extractor-args=youtube:player_client=android"
+            )
+        if self._pending_referer:
+            cmd.append(f"--referrer={self._pending_referer}")
+        cmd.append(page_url)
+        self._spawn_mpv(cmd, source="ytdl-page")
+
+    def _start_ytdlp_pipe(self, page_url: str) -> None:
+        """yt-dlp 拉流 → stdin → mpv（YouTube TLS 问题的可靠路径）."""
+        self._stop_media_procs()
+        ytdlp = shutil.which("yt-dlp")
+        if not ytdlp:
+            self._log("ERROR 未找到 yt-dlp，无法管道播放")
+            self.window_failed.emit("未找到 yt-dlp")
+            return
+
+        sock_dir = tempfile.mkdtemp(prefix="etc_mpv_")
+        self._ipc_path = os.path.join(sock_dir, "mpv.sock")
+
+        ytdlp_cmd = [
+            ytdlp,
+            "-o",
+            "-",
+            "--no-playlist",
+            "-f",
+            _YTDL_PIPE_FORMAT,
+            "--no-warnings",
+        ]
+        if _is_youtube(page_url):
+            ytdlp_cmd += [
+                "--extractor-args",
+                "youtube:player_client=android,web",
+            ]
+            # curl_cffi 可用时减轻 YouTube SSL EOF
+            ytdlp_cmd += ["--impersonate", "chrome"]
+        ytdlp_cmd.append(page_url)
+
+        self._log(f"INFO 启动 yt-dlp 管道: {' '.join(ytdlp_cmd[:8])} …")
+        try:
+            self._ytdlp_proc = subprocess.Popen(
+                ytdlp_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            self._log(f"ERROR 启动 yt-dlp 失败: {exc}")
+            self.window_failed.emit(str(exc))
+            return
+
+        cmd = self._base_mpv_cmd(self._ipc_path)
+        # 从管道读时 keep-open 可能导致 EOF 后空窗，仍保留 force-window
+        cmd.append("--demuxer-lavf-o=probesize=5M,analyzeduration=10M")
+        cmd.append("-")
+        self._spawn_mpv(cmd, stdin=self._ytdlp_proc.stdout, source="ytdl-pipe")
+        if self._ytdlp_proc.stdout:
+            self._ytdlp_proc.stdout.close()
+
+        # 异步监视 yt-dlp 过早退出
+        threading.Thread(target=self._watch_ytdlp, daemon=True).start()
+
+    def _watch_ytdlp(self) -> None:
+        proc = self._ytdlp_proc
+        if not proc:
+            return
+        rc = proc.wait()
+        if rc not in (0, None) and self._subprocess and self._subprocess.poll() is None:
+            self._log(f"WARN yt-dlp 管道退出码 {rc}（若已出画可忽略）")
+
+    def _focus_mpv_window(self) -> None:
+        if sys.platform != "darwin":
+            return
+        # 将 mpv 窗口前置，避免藏在主界面后面
+        script = f'''
+        try
+          tell application "mpv" to activate
+        end try
+        try
+          tell application "System Events"
+            set mpvProcs to every process whose name is "mpv"
+            repeat with p in mpvProcs
+              try
+                set frontmost of p to true
+              end try
+            end repeat
+          end tell
+        end try
+        '''
+        try:
+            subprocess.Popen(
+                ["osascript", "-e", script],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self._log(f"INFO 已请求前置 mpv 窗口「{WINDOW_TITLE}」")
+        except Exception as exc:
+            self._log(f"WARN 前置 mpv 窗口失败: {exc}")
+
+    def focus_window(self) -> None:
+        """供 UI 按钮调用：再次前置视频窗口."""
+        self._focus_mpv_window()
+        if self._subprocess and self._subprocess.poll() is None:
+            self._ipc_command(["set_property", "ontop", True])
+            QTimer.singleShot(3000, self._subprocess_clear_ontop)
 
     def _subprocess_clear_ontop(self) -> None:
         self._ipc_command(["set_property", "ontop", False])
@@ -448,6 +713,22 @@ class MpvPlayer(QObject):
         if self._player:
             self._player.pause = paused
 
+    def set_volume(self, volume: float, *, mute: bool | None = None) -> None:
+        """调整原声音量。volume: 0–100；mute=None 表示不改静音状态."""
+        vol = max(0.0, min(100.0, float(volume)))
+        if self._subprocess:
+            self._ipc_command(["set_property", "volume", vol])
+            if mute is not None:
+                self._ipc_command(["set_property", "mute", bool(mute)])
+            return
+        if self._player:
+            try:
+                self._player.volume = vol
+                if mute is not None:
+                    self._player.mute = bool(mute)
+            except Exception as exc:
+                self._log(f"WARN 设置音量失败: {exc}")
+
     def seek(self, seconds: float) -> None:
         if self._subprocess:
             self._ipc_command(["seek", seconds, "absolute"])
@@ -459,12 +740,7 @@ class MpvPlayer(QObject):
         self._timer.stop()
         self._video_check_timer.stop()
         self._ontop_clear_timer.stop()
-        if self._subprocess:
-            try:
-                self._subprocess.terminate()
-            except Exception:
-                pass
-            self._subprocess = None
+        self._stop_media_procs()
         if self._player:
             self._player.stop()
 
@@ -484,10 +760,18 @@ class MpvPlayer(QObject):
     def playback_mode(self) -> str:
         return self._mode
 
+    @property
+    def source_mode(self) -> str:
+        return self._source_mode
+
     def _poll_position(self) -> None:
         if self._subprocess:
             if self._subprocess.poll() is not None:
                 self._timer.stop()
+                self._log(
+                    f"WARN mpv 已退出 code={self._subprocess.returncode} "
+                    f"source={self._source_mode}"
+                )
                 self.playback_finished.emit()
                 return
             pos = self._ipc_get("time-pos")
@@ -518,16 +802,7 @@ class MpvPlayer(QObject):
         self._timer.stop()
         self._video_check_timer.stop()
         self._ontop_clear_timer.stop()
-        if self._subprocess:
-            try:
-                self._subprocess.terminate()
-                self._subprocess.wait(timeout=2)
-            except Exception:
-                try:
-                    self._subprocess.kill()
-                except Exception:
-                    pass
-            self._subprocess = None
+        self._stop_media_procs(wait=True)
         if self._player:
             try:
                 self._player.terminate()
@@ -536,6 +811,7 @@ class MpvPlayer(QObject):
             self._player = None
         self._embedded = False
         self._mode = "none"
+        self._source_mode = "none"
         if self._ipc_path:
             try:
                 os.unlink(self._ipc_path)

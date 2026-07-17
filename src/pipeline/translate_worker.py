@@ -1,12 +1,11 @@
-"""百炼大模型流式翻译 (DashScope OpenAI 兼容)."""
+"""大模型流式翻译 (OpenAI 兼容 API)."""
 
 from __future__ import annotations
 
 from typing import Callable
 
-from openai import OpenAI
-
 from src.config import settings_manager
+from src.services.llm_client import get_client
 
 SYSTEM_PROMPT = (
     "你是专业同声传译员。将用户给出的英文口语片段翻译成自然流畅的中文。"
@@ -24,17 +23,12 @@ class TranslateWorker:
         self.on_token = on_token
         self.on_complete = on_complete
         self.on_tts_feed = on_tts_feed
-        self._client = OpenAI(
-            api_key=settings_manager.data.dashscope_api_key,
-            base_url=settings_manager.data.dashscope_base_url,
-        )
 
     def translate(self, english: str) -> str:
-        if not settings_manager.data.dashscope_api_key:
-            raise RuntimeError("请设置 DASHSCOPE_API_KEY")
+        client = get_client()
 
         full: list[str] = []
-        stream = self._client.chat.completions.create(
+        stream = client.chat.completions.create(
             model=settings_manager.data.translate_model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},

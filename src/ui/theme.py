@@ -147,14 +147,45 @@ def application_qss() -> str:
         border: {BORDER_INPUT};
         border-radius: {RADIUS_LG};
         padding: 6px 10px;
+        padding-right: 32px;
         min-height: 22px;
     }}
     QComboBox:focus {{
         border: 1px solid {BLUE_500};
     }}
-    QComboBox::drop-down {{
+    QComboBox:editable {{
+        padding-right: 32px;
+    }}
+    QComboBox:editable QLineEdit {{
+        background: transparent;
         border: none;
-        width: 24px;
+        padding: 0;
+        margin: 0;
+    }}
+    QComboBox::drop-down {{
+        subcontrol-origin: padding;
+        subcontrol-position: top right;
+        width: 28px;
+        border: none;
+        border-left: 1px solid {GRAY_300};
+        border-top-right-radius: {RADIUS_LG};
+        border-bottom-right-radius: {RADIUS_LG};
+        background: {GRAY_50};
+    }}
+    QComboBox::drop-down:hover {{
+        background: {GRAY_100};
+    }}
+    QComboBox::down-arrow {{
+        image: none;
+        width: 0;
+        height: 0;
+        border-left: 5px solid transparent;
+        border-right: 5px solid transparent;
+        border-top: 6px solid {GRAY_500};
+        margin-right: 9px;
+    }}
+    QComboBox::down-arrow:on {{
+        border-top-color: {BLUE_600};
     }}
     QComboBox QAbstractItemView {{
         background: {WHITE};
@@ -295,6 +326,16 @@ def application_qss() -> str:
         background: transparent;
     }}
 
+    QLabel#videoAlert {{
+        color: {GRAY_900};
+        font-size: 13px;
+        font-weight: 600;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 8px;
+        padding: 10px 12px;
+    }}
+
     QLabel#videoTitle {{
         color: {GRAY_700};
         font-size: 12px;
@@ -306,6 +347,7 @@ def application_qss() -> str:
         color: {GRAY_400};
         font-size: 11px;
         background: transparent;
+        max-width: 420px;
     }}
 
     QWidget#aiPanel {{

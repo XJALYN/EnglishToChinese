@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -22,6 +25,7 @@ _YT_HOSTS = frozenset(
     }
 )
 
+# 通用：优先 H.264 ≤720p（macOS / mpv 更友好）
 _FORMAT = (
     "bestvideo[vcodec^=avc1][height<=720]+bestaudio/"
     "bestvideo[vcodec^=avc1]+bestaudio/"
@@ -29,6 +33,9 @@ _FORMAT = (
     "bestvideo[height<=720]+bestaudio/"
     "best"
 )
+
+# YouTube android 客户端常无分轨；18=360p 预合并 H.264，最稳
+_YT_ANDROID_FORMAT = "18/best[vcodec^=avc1]/best[height<=720]/best"
 
 
 @dataclass
@@ -99,7 +106,7 @@ def is_youtube_url(page_url: str) -> bool:
 
 
 def _impersonate_target():
-    """Chrome TLS 指纹，缓解部分环境访问 YouTube 时的 SSL EOF."""
+    """Chrome TLS 指纹；本机 curl_cffi 偶发 OpenSSL invalid library，调用方需容忍失败."""
     try:
         from yt_dlp.networking.impersonate import ImpersonateTarget
 
@@ -108,31 +115,25 @@ def _impersonate_target():
         return None
 
 
-def _base_opts() -> dict:
+def _ydl_opts(
+    *,
+    fmt: str = _FORMAT,
+    impersonate: bool = False,
+    youtube_android: bool = False,
+) -> dict:
     opts: dict = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "format": _FORMAT,
+        "format": fmt,
+        # 避免部分环境写缓存锁卡住
+        "cachedir": False,
     }
-    target = _impersonate_target()
-    if target is not None:
-        # 需安装 curl_cffi；未安装时 yt-dlp 会忽略/报错，由调用方降级
-        opts["impersonate"] = target
-    return opts
-
-
-def _youtube_client_opts(*, impersonate: bool = True) -> dict:
-    """Anaconda OpenSSL 访问默认 web 客户端偶发 SSL EOF 时，改用 android 客户端."""
-    opts: dict = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "format": _FORMAT,
-        "extractor_args": {
-            "youtube": {"player_client": ["android", "web"]},
-        },
-    }
+    if youtube_android:
+        # 勿附带 web：本机 Anaconda OpenSSL 访问 web API 易 SSL EOF
+        opts["extractor_args"] = {
+            "youtube": {"player_client": ["android"]},
+        }
     if impersonate:
         target = _impersonate_target()
         if target is not None:
@@ -150,6 +151,9 @@ def _is_ssl_error(exc: BaseException) -> bool:
             "eof occurred in violation",
             "certificate",
             "sslerror",
+            "tls connect error",
+            "openssl_internal",
+            "curl: (35)",
         )
     )
 
@@ -169,14 +173,14 @@ def _is_unsupported(exc: BaseException) -> bool:
 def _friendly_error(page_url: str, exc: BaseException) -> ValueError:
     if _is_ssl_error(exc):
         hint = (
-            "网络/SSL 握手失败（常见于本机 Python OpenSSL 访问 YouTube）。"
-            "已尝试 Chrome impersonate 与备用播放客户端仍失败。"
-            "请检查网络/代理，或执行: pip install -U yt-dlp 'curl_cffi>=0.10'"
+            "网络/SSL 握手失败（常见于本机 Python OpenSSL / curl_cffi 访问 YouTube）。"
+            "请检查网络/代理，或执行: pip install -U yt-dlp；"
+            "仍失败可试: yt-dlp --extractor-args youtube:player_client=android <URL>"
         )
         return ValueError(f"{hint}\n原始错误: {exc}")
     if _is_unsupported(exc):
         return ValueError(
-            f"无法识别该链接，请粘贴 Bilibili / YouTube 等 yt-dlp 支持的视频 URL。"
+            "无法识别该链接，请粘贴 Bilibili / YouTube 等 yt-dlp 支持的视频 URL。"
             f"\n原始错误: {exc}"
         )
     return ValueError(f"视频解析失败: {exc}")
@@ -189,6 +193,30 @@ def _extract(page_url: str, opts: dict) -> dict:
         return ydl.extract_info(page_url, download=False)
 
 
+def _extract_cli_android(page_url: str) -> dict:
+    """独立 yt-dlp 进程 + android 客户端，绕过 Python 绑定不稳定路径."""
+    exe = shutil.which("yt-dlp")
+    if not exe:
+        raise RuntimeError("未找到 yt-dlp 可执行文件")
+    cmd = [
+        exe,
+        "--no-playlist",
+        "--no-warnings",
+        "--quiet",
+        "--dump-single-json",
+        "-f",
+        _YT_ANDROID_FORMAT,
+        "--extractor-args",
+        "youtube:player_client=android",
+        page_url,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "yt-dlp CLI 失败").strip()
+        raise RuntimeError(err[-500:])
+    return json.loads(proc.stdout)
+
+
 def resolve_video_url(page_url: str) -> VideoInfo:
     """解析任意 yt-dlp 支持站点的可播放视频直链."""
     page_url = (page_url or "").strip()
@@ -197,16 +225,21 @@ def resolve_video_url(page_url: str) -> VideoInfo:
     if not re.match(r"^https?://", page_url, re.I):
         raise ValueError("请输入以 http:// 或 https:// 开头的视频链接")
 
-    attempts: list[tuple[str, dict]] = [
-        ("impersonate", _base_opts()),
-    ]
+    attempts: list[tuple[str, object]] = []
     if is_youtube_url(page_url):
-        # YouTube：保留 impersonate 换 android 客户端，再无指纹兜底
-        attempts.append(("youtube+impersonate", _youtube_client_opts(impersonate=True)))
-        attempts.append(("youtube", _youtube_client_opts(impersonate=False)))
-    plain = _base_opts()
-    plain.pop("impersonate", None)
-    attempts.append(("plain", plain))
+        # 本机最稳路径：android（无 web / 无 curl_cffi）
+        attempts.append(
+            (
+                "youtube-android",
+                _ydl_opts(fmt=_YT_ANDROID_FORMAT, youtube_android=True),
+            )
+        )
+        attempts.append(("youtube-cli-android", "cli-android"))
+        # 更高画质（依赖 curl_cffi，可能失败）
+        attempts.append(("youtube-impersonate", _ydl_opts(impersonate=True)))
+    else:
+        attempts.append(("default", _ydl_opts()))
+        attempts.append(("impersonate", _ydl_opts(impersonate=True)))
 
     errors: list[BaseException] = []
     info: dict | None = None
@@ -214,7 +247,10 @@ def resolve_video_url(page_url: str) -> VideoInfo:
 
     for name, opts in attempts:
         try:
-            info = _extract(page_url, opts)
+            if opts == "cli-android":
+                info = _extract_cli_android(page_url)
+            else:
+                info = _extract(page_url, opts)  # type: ignore[arg-type]
             used = name
             break
         except Exception as exc:  # noqa: BLE001 — 需分类后转友好错误

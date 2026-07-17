@@ -1,0 +1,28 @@
+# 本地密钥与配置（含 API Key，切勿提交）
+.env
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Electron
+electron/node_modules/
+
+# 运行时 / 缓存
+*.log
+.cache/
+
+# 原始演示素材（仓库内用压缩后的 demo.mp4）
+demo.mov

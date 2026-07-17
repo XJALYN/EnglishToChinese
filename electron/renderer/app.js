@@ -1,6 +1,40 @@
 const API = window.electronAPI?.apiBase || "http://127.0.0.1:8765";
 let summaryText = "";
 let mindmapText = "";
+let mindmapScale = 1;
+const MIN_MINDMAP_SCALE = 0.25;
+const MAX_MINDMAP_SCALE = 3;
+
+function applyMindmapZoom() {
+  const scaleEl = document.getElementById("mindmap-scale");
+  const pctEl = document.getElementById("mindmap-zoom-pct");
+  if (scaleEl) scaleEl.style.transform = `scale(${mindmapScale})`;
+  if (pctEl) pctEl.textContent = `${Math.round(mindmapScale * 100)}%`;
+}
+
+function mindmapZoomBy(delta) {
+  mindmapScale = Math.min(MAX_MINDMAP_SCALE, Math.max(MIN_MINDMAP_SCALE, mindmapScale + delta));
+  applyMindmapZoom();
+}
+
+function mindmapZoomReset() {
+  mindmapScale = 1;
+  applyMindmapZoom();
+}
+
+document.getElementById("mindmap-zoom-in")?.addEventListener("click", () => mindmapZoomBy(0.15));
+document.getElementById("mindmap-zoom-out")?.addEventListener("click", () => mindmapZoomBy(-0.15));
+document.getElementById("mindmap-zoom-reset")?.addEventListener("click", mindmapZoomReset);
+document.getElementById("mindmap-viewport")?.addEventListener(
+  "wheel",
+  (e) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      mindmapZoomBy(e.deltaY < 0 ? 0.1 : -0.1);
+    }
+  },
+  { passive: false }
+);
 
 const MODELS = ["qwen-plus", "qwen-max", "qwen-turbo", "qwen-long"];
 
@@ -120,6 +154,7 @@ document.getElementById("btn-mindmap").addEventListener("click", async () => {
   const data = await res.json();
   if (!res.ok) { out.textContent = data.detail || "失败"; return; }
   mindmapText = data.mermaid;
+  mindmapZoomReset();
   out.textContent = mindmapText;
   out.removeAttribute("data-processed");
   mermaid.run({ nodes: [out] });
