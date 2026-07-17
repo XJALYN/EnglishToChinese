@@ -29,8 +29,15 @@
           <option>tiny</option><option>base</option><option>small</option><option>medium</option>
         </select>
       </label>
-      <label>TTS 音色 <input id="tts-voice" /></label>
+      <label>TTS 音色 <select id="tts-voice"></select></label>
       <label>HF 镜像 <input id="hf-endpoint" /></label>
+      <fieldset>
+        <legend>同声传译延时</legend>
+        <label>配音延迟 (秒) <input type="number" id="interpretation-delay" min="0.5" max="10" step="0.5" /></label>
+        <label>启动等待 (秒) <input type="number" id="startup-delay" min="0" max="15" step="0.5" /></label>
+        <label>音频分块 (秒) <input type="number" id="chunk-seconds" min="1" max="8" step="0.5" /></label>
+        <label>块间重叠 (秒) <input type="number" id="chunk-overlap" min="0" max="3" step="0.1" /></label>
+      </fieldset>
       <button type="submit">保存配置</button>
     </form>
     <p id="settings-status"></p>

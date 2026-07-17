@@ -32,8 +32,44 @@ async function loadSettings() {
   document.getElementById("summary-model").value = data.summary_model;
   document.getElementById("mindmap-model").value = data.mindmap_model;
   document.getElementById("whisper-model").value = data.whisper_model;
-  document.getElementById("tts-voice").value = data.tts_voice;
+  fillTtsVoices(data.tts_voices || [], data.tts_voice);
   document.getElementById("hf-endpoint").value = data.hf_endpoint;
+  document.getElementById("interpretation-delay").value = data.interpretation_delay ?? 3;
+  document.getElementById("startup-delay").value = data.startup_delay ?? 4;
+  document.getElementById("chunk-seconds").value = data.chunk_seconds ?? 3;
+  document.getElementById("chunk-overlap").value = data.chunk_overlap ?? 0.5;
+}
+
+function fillTtsVoices(voices, current) {
+  const el = document.getElementById("tts-voice");
+  el.innerHTML = "";
+  let lastCat = null;
+  voices.forEach((v) => {
+    if (v.category !== lastCat) {
+      const group = document.createElement("optgroup");
+      group.label = v.category;
+      group.dataset.cat = v.category;
+      el.appendChild(group);
+      lastCat = v.category;
+    }
+    const group = [...el.querySelectorAll("optgroup")].find(
+      (g) => g.dataset.cat === v.category
+    );
+    const o = document.createElement("option");
+    o.value = v.id;
+    o.textContent = `${v.label} (${v.id})`;
+    (group || el).appendChild(o);
+  });
+  if (current) {
+    el.value = current;
+    if (el.value !== current) {
+      const o = document.createElement("option");
+      o.value = current;
+      o.textContent = current;
+      el.appendChild(o);
+      el.value = current;
+    }
+  }
 }
 
 document.getElementById("settings-form").addEventListener("submit", async (e) => {
@@ -46,6 +82,10 @@ document.getElementById("settings-form").addEventListener("submit", async (e) =>
     whisper_model: document.getElementById("whisper-model").value,
     tts_voice: document.getElementById("tts-voice").value,
     hf_endpoint: document.getElementById("hf-endpoint").value,
+    interpretation_delay: Number(document.getElementById("interpretation-delay").value),
+    startup_delay: Number(document.getElementById("startup-delay").value),
+    chunk_seconds: Number(document.getElementById("chunk-seconds").value),
+    chunk_overlap: Number(document.getElementById("chunk-overlap").value),
   };
   await fetch(`${API}/api/settings`, {
     method: "PUT",
